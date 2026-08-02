@@ -1,0 +1,53 @@
+x-quest-vars: &quest-vars
+  STUDENT_USER: player
+  STUDENT_PASS: changeme
+  DETECTIVE_USER: watson
+  SERVER2_PASS: hunter2
+  SUBDOMAIN: vault
+  DOMAIN: chucknorris.quest.local
+  SSH_PORT: "2222"
+
+services:
+  terminal:
+    build:
+      context: ./server1
+      dockerfile: Dockerfile
+      args:
+        <<: *quest-vars
+    image: nix-task-server2:latest
+    container_name: nix-server1
+    hostname: server1
+    ports:
+      - "2201:22"          # ssh in from "the email"
+    cgroup: host
+    tmpfs:
+      - /run
+      - /run/lock
+    networks:
+      questnet:
+
+  server2:
+    build:
+      context: ./server2
+      dockerfile: Dockerfile
+      args:
+        <<: *quest-vars
+    image: nix-task-server2:latest
+    container_name: nix-server2
+    hostname: server2
+    cgroup: host
+    tmpfs:
+      - /run
+      - /run/lock
+    networks:
+      questnet:
+        # These are the two hostnames server1 needs to reach server2 by:
+        # the bare domain (Task 3, used for ssh) and the subdomain.domain
+        # (Task 8, used for the final HTTP request).
+        aliases:
+          - chucknorris.quest.local
+          - vault.chucknorris.quest.local
+
+networks:
+  questnet:
+    driver: bridge

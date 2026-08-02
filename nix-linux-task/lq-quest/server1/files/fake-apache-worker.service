@@ -1,0 +1,15 @@
+[Unit]
+Description=Apache worker (quest decoy process)
+After=network.target
+
+[Service]
+Type=simple
+User=__DETECTIVE_USER__
+# Renames the running process to "apache2" so it shows up in `ps aux`
+# under the detective user's name, without needing a real multi-user
+# Apache/suexec setup.
+ExecStart=/bin/bash -c 'exec -a apache2 sleep infinity'
+Restart=always
+
+[Install]
+WantedBy=multi-user.target

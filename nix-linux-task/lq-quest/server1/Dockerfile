@@ -1,0 +1,87 @@
+FROM linux-lab-image:systemd
+
+ENV DEBIAN_FRONTEND=noninteractive
+USER root
+# ---- Build-time parameters (override with --build-arg) ----------------
+# These represent the "secrets" your platform should randomize per
+# participant. Sensible defaults are provided for local testing.
+ARG STUDENT_USER=player
+ARG STUDENT_PASS=changeme
+ARG DETECTIVE_USER=watson
+ARG SERVER2_PASS=hunter2
+ARG SUBDOMAIN=vault
+ARG DOMAIN=chucknorris.quest.local
+
+# Persist them as env vars too, in case an entrypoint script needs them
+ENV STUDENT_USER=${STUDENT_USER} \
+    DETECTIVE_USER=${DETECTIVE_USER} \
+    SUBDOMAIN=${SUBDOMAIN} \
+    DOMAIN=${DOMAIN}
+
+RUN apt-get update && apt-get install -y \
+    openssh-server \
+    apache2 \
+    zip \
+    unzip \
+    vim \
+    nano \
+    net-tools \
+    less \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*
+
+# ---- Task 0: create the student account used to log in ---------------
+RUN useradd -m -s /bin/bash "${STUDENT_USER}" \
+    && echo "${STUDENT_USER}:${STUDENT_PASS}" | chpasswd \
+    && usermod -aG sudo "${STUDENT_USER}"
+
+# ---- Task 4: create the "detective" user apache appears to run as ----
+RUN useradd -r -m -s /usr/sbin/nologin "${DETECTIVE_USER}"
+
+# ---- Task 1 & 2: ~/LQ/chest with wrong perms + hidden secret ---------
+RUN mkdir -p /home/${STUDENT_USER}/LQ/chest \
+    && echo "${SUBDOMAIN}" > /home/${STUDENT_USER}/LQ/chest/.secret \
+    && chown -R root:root /home/${STUDENT_USER}/LQ \
+    && chmod 750 /home/${STUDENT_USER}/LQ \
+    && chmod 700 /home/${STUDENT_USER}/LQ/chest \
+    && chmod 600 /home/${STUDENT_USER}/LQ/chest/.secret
+
+# ---- Task 5: password.zip containing the server2 password ------------
+RUN cd /tmp \
+    && echo "${SERVER2_PASS}" > password.txt \
+    && zip /home/${STUDENT_USER}/LQ/chest/password.zip password.txt \
+    && rm -f password.txt \
+    && chown root:root /home/${STUDENT_USER}/LQ/chest/password.zip \
+    && chmod 600 /home/${STUDENT_USER}/LQ/chest/password.zip
+
+# ---- Task 3: /var/log/quest.log, domain must land on line 16 ---------
+COPY files/quest.log.template /tmp/quest.log.template
+RUN sed "s/__DOMAIN__/${DOMAIN}/" /tmp/quest.log.template > /var/log/quest.log \
+    && rm -f /tmp/quest.log.template \
+    && chmod 644 /var/log/quest.log
+
+# ---- systemd units: sshd + the decoy "apache worker" process ---------
+RUN mkdir -p /etc/systemd/system/multi-user.target.wants
+
+# Bring back sshd (it was stripped from the base image's wants dirs)
+RUN ln -sf /lib/systemd/system/ssh.service \
+    /etc/systemd/system/multi-user.target.wants/ssh.service
+
+# A background process named "apache2" running as DETECTIVE_USER.
+# This is what `ps aux | grep apache` is meant to reveal for Task 4.
+# (Real apache2 is intentionally left disabled on server1 so it doesn't
+# confuse the detective clue with a www-data-owned process.)
+COPY files/fake-apache-worker.service /etc/systemd/system/fake-apache-worker.service
+COPY files/verify /verification-script
+RUN chmod +x /verification-script
+
+RUN sed -i "s/__DETECTIVE_USER__/${DETECTIVE_USER}/" /etc/systemd/system/fake-apache-worker.service \
+    && ln -sf /etc/systemd/system/fake-apache-worker.service \
+    /etc/systemd/system/multi-user.target.wants/fake-apache-worker.service
+
+# Make sure sshd allows password auth (defaults are usually fine, but be explicit)
+RUN sed -i 's/^#\?PasswordAuthentication.*/PasswordAuthentication yes/' /etc/ssh/sshd_config \
+    && mkdir -p /run/sshd
+
+STOPSIGNAL SIGRTMIN+3
+CMD ["/sbin/init"]
