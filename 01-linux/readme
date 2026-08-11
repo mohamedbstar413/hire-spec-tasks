@@ -1,0 +1,10 @@
+Both files are ready. Quick summary of what's inside:
+
+script.sh — appends a timestamped line to /root/file.txt.
+
+Dockerfile:
+
+Starts from bstar999/linux-lab-image:systemd
+Copies script.sh to /script.sh, sets owner to root:root, permissions 644 → no execute bit, so ./script.sh will fail with "Permission denied" until the candidate runs chmod +x /script.sh.
+Pre-creates /root/file.txt, owned by root:root, permissions 660 → owner and group can read/write, "others" have no access at all.
+note: verificcation-script should look for x in file.txt permissions
