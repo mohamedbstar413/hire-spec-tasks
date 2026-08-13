@@ -1,0 +1,96 @@
+FROM bstar999/linux-lab-image:systemd
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Create candidate user with passwordless sudo privileges
+RUN useradd -m -s /bin/bash candidate && \
+    echo "candidate ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/candidate && \
+    chmod 0440 /etc/sudoers.d/candidate
+
+# Create a second user + shared group, needed for the group-permissions scenario (1.7)
+RUN useradd -m -s /bin/bash teammate && \
+    groupadd devteam && \
+    usermod -aG devteam candidate && \
+    usermod -aG devteam teammate
+
+# =============================================================================
+# Scenario 1.1 — Script won't run (missing execute bit)
+# Expected symptom: bash: ./script.sh: Permission denied
+# =============================================================================
+RUN printf '#!/bin/bash\necho "Hello World"\n' > /home/candidate/script.sh && \
+    chown candidate:candidate /home/candidate/script.sh && \
+    chmod 644 /home/candidate/script.sh
+
+# =============================================================================
+# Scenario 1.2 — Can't read a file you own
+# Expected symptom: cat: notes.txt: Permission denied
+# =============================================================================
+RUN echo "meeting notes" > /home/candidate/notes.txt && \
+    chown candidate:candidate /home/candidate/notes.txt && \
+    chmod 000 /home/candidate/notes.txt
+
+# =============================================================================
+# Scenario 1.3 — Can't write to a file (read-only)
+# Expected symptom: editor/save gives "Permission denied"
+# =============================================================================
+RUN echo "draft" > /home/candidate/draft.txt && \
+    chown candidate:candidate /home/candidate/draft.txt && \
+    chmod 444 /home/candidate/draft.txt
+
+# =============================================================================
+# Scenario 1.4 — File owned by root; candidate must take ownership
+# Expected fix: sudo chown candidate:candidate config.txt
+# =============================================================================
+RUN echo "config" > /home/candidate/config.txt && \
+    chown root:root /home/candidate/config.txt && \
+    chmod 644 /home/candidate/config.txt
+
+# =============================================================================
+# Scenario 1.5 — Directory listing denied
+# Expected symptom: ls: cannot open directory 'project': Permission denied
+# =============================================================================
+RUN mkdir -p /home/candidate/project && \
+    echo "secret plans" > /home/candidate/project/plans.txt && \
+    chown -R candidate:candidate /home/candidate/project && \
+    chmod 000 /home/candidate/project
+
+# =============================================================================
+# Scenario 1.7 — Shared file, group can't edit
+# File is owned by "teammate", group "devteam" (candidate is a member),
+# but the group has no write bit set.
+# Expected symptom: candidate gets Permission denied writing to shared file.
+# Expected fix: sudo chmod g+w /srv/shared/report.txt (as file owner/root)
+# =============================================================================
+RUN mkdir -p /srv/shared && \
+    chmod 755 /srv/shared && \
+    echo "shared report" > /srv/shared/report.txt && \
+    chown teammate:devteam /srv/shared/report.txt && \
+    chmod 640 /srv/shared/report.txt
+
+# =============================================================================
+# Scenario 1.9 — Bad umask causing new files to be world-writable
+# Expected symptom: newly created files under candidate's shell are 666/777
+# Expected fix: remove/replace "umask 000" in ~/.bashrc with e.g. umask 022
+# =============================================================================
+RUN echo "umask 000" >> /home/candidate/.bashrc && \
+    chown candidate:candidate /home/candidate/.bashrc
+
+# =============================================================================
+# Scenario 1.10 — Wrong shebang path (looks like a permissions issue, isn't)
+# Script IS executable, but its interpreter path doesn't exist.
+# Expected symptom: bash: ./run.sh: /bin/nonexistentshell: bad interpreter:
+#                   No such file or directory
+# Expected fix: change the shebang to #!/bin/bash
+# =============================================================================
+RUN printf '#!/bin/nonexistentshell\necho hi\n' > /home/candidate/run.sh && \
+    chown candidate:candidate /home/candidate/run.sh && \
+    chmod +x /home/candidate/run.sh
+
+# systemd MUST run as root (PID 1). Candidate user is used when attaching terminals.
+USER root
+WORKDIR /root
+
+STOPSIGNAL SIGRTMIN+3
+
+# Set systemd as default entrypoint / init
+CMD ["/sbin/init"]

@@ -1,0 +1,96 @@
+FROM bstar999/linux-lab-image:systemd
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update && apt-get install -y \
+    python3 \
+    procps \
+    psmisc \
+    lsof \
+    net-tools \
+    iproute2 \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*
+
+RUN useradd -m -s /bin/bash student && \
+    echo "student:student" | chpasswd && \
+    usermod -aG sudo student
+
+# ---------------------------------------------------------------------------
+# 9.5 — accidental infinite-loop script (created as a file; launched at
+#   boot as a background job, same as the others)
+# ---------------------------------------------------------------------------
+RUN cat > /home/student/loop.sh <<'EOF'
+#!/bin/bash
+while true; do :; done
+EOF
+RUN chmod +x /home/student/loop.sh && \
+    chown student:student /home/student/loop.sh
+
+# ---------------------------------------------------------------------------
+# Setup script that spins up all the background-process scenarios as the
+# "student" user at boot:
+#   9.3  — a pile of harmless background jobs (student loses track of them)
+#   9.4  — a process that ignores SIGTERM (trap "" TERM)
+#   9.5  — the CPU-spinning infinite loop from loop.sh
+#   9.10 — a process squatting on TCP port 8000
+#
+# Run via a systemd oneshot unit (not directly in the Dockerfile) so the
+# processes are live, running background jobs inside the container at
+# runtime rather than baked into a layer.
+# ---------------------------------------------------------------------------
+RUN mkdir -p /opt/lab-setup
+COPY <<'EOF' /opt/lab-setup/spawn-jobs.sh
+#!/bin/bash
+set -e
+
+if [ -f /opt/lab-setup/.done ]; then
+    exit 0
+fi
+
+# 9.3 — several harmless but noisy background jobs, so `jobs`/`ps` gets
+# cluttered and the student has to sort out what's actually a problem
+su - student -c "
+    nohup sleep 3600 &>/dev/null & disown
+    nohup sleep 3600 &>/dev/null & disown
+    nohup sleep 3600 &>/dev/null & disown
+    nohup sleep 3600 &>/dev/null & disown
+    nohup ping -i 5 127.0.0.1 &>/dev/null & disown
+"
+
+# 9.4 — process that ignores SIGTERM
+su - student -c "nohup sh -c 'trap \"\" TERM; sleep 3600' &>/dev/null & disown"
+
+# 9.5 — CPU-spinning infinite loop
+su - student -c "nohup /home/student/loop.sh &>/dev/null & disown"
+
+# 9.10 — process holding TCP port 8000
+su - student -c "cd /home/student && nohup python3 -m http.server 8000 &>/dev/null & disown"
+
+touch /opt/lab-setup/.done
+EOF
+RUN chmod +x /opt/lab-setup/spawn-jobs.sh
+
+COPY <<'EOF' /etc/systemd/system/exam-jobs-setup.service
+[Unit]
+Description=Spawn background process lab scenarios
+After=multi-user.target network.target
+
+[Service]
+Type=oneshot
+ExecStart=/opt/lab-setup/spawn-jobs.sh
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+RUN systemctl enable exam-jobs-setup.service
+
+
+USER root
+WORKDIR /root
+
+STOPSIGNAL SIGRTMIN+3
+CMD ["/sbin/init"]
+

@@ -1,0 +1,117 @@
+FROM bstar999/linux-lab-image:systemd
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+# ---------------------------------------------------------------------------
+# 1 — /exam/mnt is a 1GB filesystem. It's full of small files, but one large
+#   file is what's actually consuming most of the space. A background
+#   process holds that file open, so `rm` alone won't reclaim the space
+#   until the candidate identifies and deals with the holding process
+#   (kill it / have it re-exec / restart the service, etc.).
+# ---------------------------------------------------------------------------
+
+RUN apt-get update && apt-get install -y \
+    util-linux \
+    e2fsprogs \
+    psmisc \
+    lsof \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*
+
+# Create a 1GB backing file and format it as ext4, mount at /exam/mnt
+RUN mkdir -p /exam/mnt && \
+    dd if=/dev/zero of=/opt/exam-disk.img bs=1M count=1024 && \
+    mkfs.ext4 -F /opt/exam-disk.img
+
+# Populate the filesystem at container start (mounting a loop device at
+# build time doesn't persist reliably across all container runtimes, so
+# we do the mount + populate step via a first-boot systemd unit instead).
+
+RUN mkdir -p /opt/lab-setup
+COPY <<'EOF' /opt/lab-setup/populate-disk.sh
+#!/bin/bash
+set -e
+
+MNT=/exam/mnt
+IMG=/opt/exam-disk.img
+
+# Mark as already done to keep this idempotent across restarts
+if [ -f /opt/lab-setup/.done ]; then
+    exit 0
+fi
+
+mkdir -p "$MNT"
+mount -o loop "$IMG" "$MNT"
+
+# Add the mount to fstab so `mount -a` / reboots behave normally for the
+# candidate, using the loop device explicitly
+LOOPDEV=$(losetup -j "$IMG" | cut -d: -f1)
+if ! grep -q "$IMG" /etc/fstab; then
+    echo "$IMG $MNT ext4 loop,defaults 0 0" >> /etc/fstab
+fi
+
+# Fill with lots of small files (~50MB total)
+mkdir -p "$MNT/small-files"
+for i in $(seq 1 500); do
+    head -c 100k /dev/urandom > "$MNT/small-files/file_$i.dat"
+done
+
+# Create the one big file consuming most of the remaining space (~800MB)
+mkdir -p "$MNT/logs"
+dd if=/dev/zero of="$MNT/logs/app.log" bs=1M count=800
+
+# Start a long-running process that opens the big file and holds it open
+# (simulating a runaway logging process / leaked file handle)
+nohup tail -f "$MNT/logs/app.log" > /dev/null 2>&1 &
+echo $! > /opt/lab-setup/holder.pid
+
+touch /opt/lab-setup/.done
+EOF
+RUN chmod +x /opt/lab-setup/populate-disk.sh
+
+# systemd unit to run the populate script once on boot, after local
+# filesystems are ready, so it works whether the container is started
+# fresh or restarted
+COPY <<'EOF' /etc/systemd/system/exam-disk-setup.service
+[Unit]
+Description=Populate exam disk lab scenario
+After=local-fs.target
+Before=multi-user.target
+
+[Service]
+Type=oneshot
+ExecStart=/opt/lab-setup/populate-disk.sh
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+RUN systemctl enable exam-disk-setup.service
+
+# ---------------------------------------------------------------------------
+# Candidate-facing task briefing
+# ---------------------------------------------------------------------------
+RUN mkdir -p /root/lab-tasks && cat > /root/lab-tasks/README.md << 'EOF'
+# Disk Space Lab
+
+## Task 1 — Reclaim space on /exam/mnt
+
+/exam/mnt is a 1GB filesystem that has filled up. It contains many small
+files, but investigate to find what's actually consuming most of the
+space, then reclaim that space.
+
+Note: deleting the offending file by name alone may not be enough to
+actually free the space back up — think about *why*, and what else you
+need to do.
+
+Useful commands to investigate with: `df -h`, `du -sh`, `lsof`,
+`fuser -v`.
+EOF
+
+USER root
+WORKDIR /root
+
+STOPSIGNAL SIGRTMIN+3
+CMD ["/sbin/init"]
+

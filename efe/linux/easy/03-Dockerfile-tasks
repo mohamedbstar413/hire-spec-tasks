@@ -1,0 +1,25 @@
+## 5.1 — New user can't log in
+A new hire named "newuser" is supposed to have an account on this box but
+cannot log in at all. Create and configure the account so they can log in
+with a working interactive shell.
+ 
+## 5.4 — sudo access broken
+User "sudouser" (password: sudouser) reports that running any sudo command
+gives a "not in the sudoers file" error. Diagnose and grant appropriate
+sudo access.
+ 
+## 5.6 — Login "kicks back out"
+User "shelluser" (password: shelluser) says they can authenticate but the
+session immediately closes with no shell prompt. Find and fix the cause.
+ 
+## 5.8 — Files land in the wrong group
+User "groupconfused" (password: groupconfused) expects new files they
+create to belong to the "students" group, but they don't. Diagnose the
+difference between primary and supplementary group membership and correct
+it.
+ 
+## 5.9 — Shared directory group inheritance
+/srv/shared-project (group: projectteam) should cause every new file
+created inside it to automatically inherit the "projectteam" group,
+regardless of the creating user's own primary group. Set the appropriate
+special permission bit on the directory to achieve this, then verify.

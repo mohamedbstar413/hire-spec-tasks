@@ -1,0 +1,107 @@
+FROM bstar999/linux-lab-image:systemd
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Install the packages needed for these scenarios
+RUN apt-get update && apt-get install -y \
+    nginx \
+    apache2 \
+    python3 \
+    curl \
+    sudo \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*
+
+# Create candidate user with passwordless sudo privileges
+RUN useradd -m -s /bin/bash candidate && \
+    echo "candidate ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/candidate && \
+    chmod 0440 /etc/sudoers.d/candidate
+
+# =============================================================================
+# Scenario 2.1 — Web server not running
+# Custom lightweight service "web1" on port 8081, left stopped and disabled.
+# =============================================================================
+RUN mkdir -p /opt/web1 && echo "<h1>web1 is up</h1>" > /opt/web1/index.html
+
+RUN printf '%s\n' \
+    '[Unit]' \
+    'Description=Web1 demo service' \
+    'After=network.target' \
+    '' \
+    '[Service]' \
+    'WorkingDirectory=/opt/web1' \
+    'ExecStart=/usr/bin/python3 -m http.server 8081' \
+    'Restart=on-failure' \
+    '' \
+    '[Install]' \
+    'WantedBy=multi-user.target' \
+    > /etc/systemd/system/web1.service
+
+RUN systemctl daemon-reload && \
+    systemctl disable web1.service
+
+# =============================================================================
+# Scenario 2.2 — Service won't survive reboot
+# Custom lightweight service "web2" on port 8082, explicitly disabled
+# (simulating a service that was started manually and never enabled).
+# =============================================================================
+RUN mkdir -p /opt/web2 && echo "<h1>web2 is up</h1>" > /opt/web2/index.html
+
+RUN printf '%s\n' \
+    '[Unit]' \
+    'Description=Web2 demo service' \
+    'After=network.target' \
+    '' \
+    '[Service]' \
+    'WorkingDirectory=/opt/web2' \
+    'ExecStart=/usr/bin/python3 -m http.server 8082' \
+    'Restart=on-failure' \
+    '' \
+    '[Install]' \
+    'WantedBy=multi-user.target' \
+    > /etc/systemd/system/web2.service
+
+RUN systemctl daemon-reload && \
+    systemctl disable web2.service
+
+# =============================================================================
+# Scenario 2.3 — Service status shows "failed" (bad config)
+# nginx site config has a syntax error (missing semicolon), so nginx fails
+# validation and shows a "failed" unit status when systemd tries to start it.
+# =============================================================================
+RUN rm -f /etc/nginx/sites-enabled/default /etc/nginx/sites-available/default
+
+RUN printf '%s\n' \
+    'server {' \
+    '    listen 80 default_server' \
+    '    listen [::]:80 default_server;' \
+    '' \
+    '    root /var/www/html;' \
+    '    index index.html index.htm index.nginx-debian.html;' \
+    '' \
+    '    server_name _;' \
+    '' \
+    '    location / {' \
+    '        try_files $uri $uri/ =404;' \
+    '    }' \
+    '}' \
+    > /etc/nginx/sites-enabled/default.conf
+
+RUN systemctl enable nginx
+
+# =============================================================================
+# Scenario 2.6 — Service running on the wrong port
+# apache2 is reconfigured to listen on 8080 instead of the expected port 80.
+# =============================================================================
+RUN sed -i 's/^Listen 80/Listen 8080/' /etc/apache2/ports.conf && \
+    sed -i 's/<VirtualHost \*:80>/<VirtualHost *:8080>/' /etc/apache2/sites-enabled/000-default.conf && \
+    systemctl enable apache2
+
+# systemd MUST run as root (PID 1). Candidate user is used when attaching terminals.
+USER root
+WORKDIR /root
+
+STOPSIGNAL SIGRTMIN+3
+
+# Set systemd as default entrypoint / init
+CMD ["/sbin/init"]

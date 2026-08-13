@@ -1,0 +1,24 @@
+# Background Process & Job Control Lab
+
+Log in as "student" (password: student) for each task below.
+
+## 9.3 — Too many background jobs
+You've lost track of what's running in the background under your session.
+Identify everything running and clean up the background jobs you no
+longer need.
+
+## 9.4 — Process won't die with a normal kill
+There's a process that keeps surviving a standard `kill`. Figure out why
+and actually terminate it.
+
+## 9.5 — High CPU usage from a runaway script
+Something is consuming a full CPU core and the system feels sluggish.
+Track down the culprit process and deal with it.
+
+## 9.10 — Port already in use
+A new service needs to bind to TCP port 8000 but fails, complaining the
+address is already in use. Find what's holding the port and free it up.
+
+Useful commands: `jobs`, `ps aux`, `ps -ef --forest`, `top`/`htop`,
+`kill`, `kill -9`, `pkill`, `lsof -i :8000`, `ss -tlnp`,
+`fuser -k 8000/tcp`.

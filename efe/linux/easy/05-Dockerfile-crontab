@@ -1,0 +1,145 @@
+FROM bstar999/linux-lab-image:systemd
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+# ---------------------------------------------------------------------------
+# Base packages: cron + the student account
+# ---------------------------------------------------------------------------
+RUN apt-get update && apt-get install -y \
+    cron \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*
+
+RUN useradd -m -s /bin/bash student && \
+    echo "student:student" | chpasswd && \
+    usermod -aG sudo student
+
+RUN systemctl enable cron.service
+
+# ---------------------------------------------------------------------------
+# 7.1 — Cron job never runs because it was never actually scheduled
+#   Symptom: student edited a file but forgot to add it to crontab.
+#   Fault: script exists and is executable, but there is NO crontab entry
+#   at all for it.
+# ---------------------------------------------------------------------------
+RUN cat > /home/student/backup.sh <<'EOF'
+#!/bin/bash
+echo "backup ran at $(date)" >> /home/student/backup.log
+EOF
+RUN chmod +x /home/student/backup.sh && \
+    chown student:student /home/student/backup.sh
+
+# ---------------------------------------------------------------------------
+# 7.2 — Cron job scheduled but script isn't executable
+#   Fault: crontab entry exists and points at the right script, but the
+#   script lacks the execute bit.
+# ---------------------------------------------------------------------------
+RUN cat > /home/student/task.sh <<'EOF'
+#!/bin/bash
+echo "task ran" >> /home/student/task.log
+EOF
+RUN chmod -x /home/student/task.sh && \
+    chown student:student /home/student/task.sh
+
+# ---------------------------------------------------------------------------
+# 7.3 — Wrong time field order confusion (classic beginner mistake)
+#   Fault: report.sh is scheduled, but at a field order/value that doesn't
+#   run when the student actually expects it to.
+# ---------------------------------------------------------------------------
+RUN cat > /home/student/report.sh <<'EOF'
+#!/bin/bash
+echo "report ran at $(date)" >> /home/student/report.log
+EOF
+RUN chmod +x /home/student/report.sh && \
+    chown student:student /home/student/report.sh
+
+# ---------------------------------------------------------------------------
+# 7.5 — Job "works when I run it myself" but fails via cron
+#   Fault: script writes to a relative path (mylog.txt), which resolves
+#   fine when the student runs it manually from their home dir, but cron
+#   executes with a different working directory (typically $HOME or /),
+#   so the log ends up somewhere unexpected or fails silently.
+# ---------------------------------------------------------------------------
+RUN cat > /home/student/dateprint.sh <<'EOF'
+#!/bin/bash
+date >> mylog.txt
+EOF
+RUN chmod +x /home/student/dateprint.sh && \
+    chown student:student /home/student/dateprint.sh
+
+# ---------------------------------------------------------------------------
+# 7.7 — Crontab edited for the wrong user
+#   Fault: the job intended for "student" was actually added to root's
+#   crontab instead.
+# ---------------------------------------------------------------------------
+RUN cat > /home/student/oops.sh <<'EOF'
+#!/bin/bash
+echo "oops ran at $(date)" >> /home/student/oops.log
+EOF
+RUN chmod +x /home/student/oops.sh && \
+    chown student:student /home/student/oops.sh
+
+# ---------------------------------------------------------------------------
+# Install the actual crontabs (as root, targeting the crontab spool files
+# directly so no interactive `crontab -e` is needed at build time)
+# ---------------------------------------------------------------------------
+
+# student's crontab: 7.2, 7.3, 7.5 entries (7.1's backup.sh is deliberately
+# absent from any crontab)
+RUN cat > /var/spool/cron/crontabs/student <<'EOF'
+* * * * * /home/student/task.sh
+30 9 * * 1 /home/student/report.sh
+* * * * * /home/student/dateprint.sh
+EOF
+RUN chown student:crontab /var/spool/cron/crontabs/student && \
+    chmod 600 /var/spool/cron/crontabs/student
+
+# root's crontab: 7.7 fault — oops.sh landed here instead of student's
+RUN cat > /var/spool/cron/crontabs/root <<'EOF'
+* * * * * /home/student/oops.sh
+EOF
+RUN chmod 600 /var/spool/cron/crontabs/root
+
+# ---------------------------------------------------------------------------
+# Candidate-facing task briefing
+# ---------------------------------------------------------------------------
+RUN mkdir -p /root/lab-tasks && cat > /root/lab-tasks/README.md << 'EOF'
+# Cron Troubleshooting Lab
+
+Log in as "student" (password: student) and investigate each scenario.
+None of the fixes below are applied — that's your job.
+
+## 7.1 — backup.sh never runs
+/home/student/backup.sh exists and is executable, and is supposed to run
+periodically, but /home/student/backup.log is never created/updated.
+Find out why and get it scheduled correctly.
+
+## 7.2 — task.sh scheduled but never produces output
+/home/student/task.sh is supposed to run every minute, but
+/home/student/task.log never appears. Investigate.
+
+## 7.3 — report.sh runs at the wrong time
+report.sh is scheduled, but it's not running when expected (student
+expected "every Monday at 9:30 AM"). Check the crontab entry carefully.
+
+## 7.5 — dateprint.sh works manually but not via cron
+Running `/home/student/dateprint.sh` by hand works fine and updates a log
+file. But when it runs via cron, nothing seems to show up in
+/home/student/mylog.txt. Figure out what's different about cron's
+execution environment.
+
+## 7.7 — oops.sh never runs for the student
+/home/student/oops.sh was supposed to be scheduled for the student user,
+but it never seems to execute under their account. Check whose crontab it
+actually ended up in and correct it.
+
+Useful commands: `crontab -l`, `sudo crontab -l -u <user>`,
+`grep CRON /var/log/syslog`, `systemctl status cron`.
+EOF
+
+USER root
+WORKDIR /root
+
+STOPSIGNAL SIGRTMIN+3
+CMD ["/sbin/init"]
+

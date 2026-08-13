@@ -1,0 +1,31 @@
+# Cron Troubleshooting Lab
+
+Log in as "student" (password: student) and investigate each scenario.
+None of the fixes below are applied — that's your job.
+
+## 7.1 — backup.sh never runs
+/home/student/backup.sh exists and is executable, and is supposed to run
+periodically, but /home/student/backup.log is never created/updated.
+Find out why and get it scheduled correctly.
+
+## 7.2 — task.sh scheduled but never produces output
+/home/student/task.sh is supposed to run every minute, but
+/home/student/task.log never appears. Investigate.
+
+## 7.3 — report.sh runs at the wrong time
+report.sh is scheduled, but it's not running when expected (student
+expected "every Monday at 9:30 AM"). Check the crontab entry carefully.
+
+## 7.5 — dateprint.sh works manually but not via cron
+Running `/home/student/dateprint.sh` by hand works fine and updates a log
+file. But when it runs via cron, nothing seems to show up in
+/home/student/mylog.txt. Figure out what's different about cron's
+execution environment.
+
+## 7.7 — oops.sh never runs for the student
+/home/student/oops.sh was supposed to be scheduled for the student user,
+but it never seems to execute under their account. Check whose crontab it
+actually ended up in and correct it.
+
+Useful commands: `crontab -l`, `sudo crontab -l -u <user>`,
+`grep CRON /var/log/syslog`, `systemctl status cron`.

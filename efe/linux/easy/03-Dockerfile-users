@@ -1,0 +1,54 @@
+FROM bstar999/linux-lab-image:systemd
+ 
+ENV DEBIAN_FRONTEND=noninteractive
+ 
+# ---------------------------------------------------------------------------
+# 5.4 — User exists but is NOT in sudoers
+#   Symptom: "sudouser is not in the sudoers file. This incident will be
+#   reported." when running sudo.
+# ---------------------------------------------------------------------------
+RUN useradd -m -s /bin/bash sudouser && \
+    echo "sudouser:sudouser" | chpasswd
+ 
+# ---------------------------------------------------------------------------
+# 5.6 — Wrong default shell assigned
+#   Symptom: user authenticates fine but is immediately disconnected /
+#   never gets a prompt, because their login shell is /bin/false.
+# ---------------------------------------------------------------------------
+RUN useradd -m -s /bin/false shelluser && \
+    echo "shelluser:shelluser" | chpasswd
+ 
+# ---------------------------------------------------------------------------
+# 5.8 — Primary vs supplementary group confusion
+#   Symptom: files the user creates end up owned by an unexpected group
+#   because their PRIMARY group isn't what they (or the task) expect.
+#
+#   Here "students" is created as a group, and groupconfused's primary
+#   group is deliberately left as its own private user group (groupconfused)
+#   while they may only be a SUPPLEMENTARY member of "students" — or vice
+#   versa, depending on how you want the candidate to have to diagnose it.
+# ---------------------------------------------------------------------------
+RUN groupadd students && \
+    useradd -m -s /bin/bash groupconfused && \
+    echo "groupconfused:groupconfused" | chpasswd && \
+    usermod -aG students groupconfused
+# NOTE: groupconfused's primary group (from `id -gn groupconfused`) remains
+# "groupconfused", NOT "students" — despite students being the group the
+# candidate is told files should belong to. This is the bug to find/fix
+# (e.g. via `usermod -g students groupconfused` or newgrp/chgrp workflow).
+ 
+# ---------------------------------------------------------------------------
+# 5.9 — Directory where new files should inherit the parent directory's
+#   group ownership. The directory and group are provisioned here; the
+#   candidate is expected to set the special permission bit themselves
+#   (setgid) as part of the exercise — it is intentionally NOT set.
+# ---------------------------------------------------------------------------
+RUN groupadd projectteam && \
+    mkdir -p /srv/shared-project && \
+    chgrp projectteam /srv/shared-project && \
+    chmod 2770 /srv/shared-project && \
+    chmod g-s /srv/shared-project
+# Directory exists, owned by group "projectteam", rwx for owner/group —
+# but setgid bit is deliberately stripped (chmod g-s) so the candidate
+# must diagnose why new files aren't inheriting the group and re-apply it.
+ 
