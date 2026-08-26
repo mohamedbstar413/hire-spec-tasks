@@ -1,0 +1,13 @@
+#NOTE:  in order to enfoce gosu usage ==> the candidate should not be root inside lab session
+FROM bstar999/docker:with-bash
+
+WORKDIR /exam
+
+COPY app.py .
+COPY Dockerfile .
+
+RUN touch /root/write-here.txt && \
+    chown root:root /root/write-here.txt && \
+    chmod 007 /root/write-here.txt
+
+ENTRYPOINT ["/bin/bash"]

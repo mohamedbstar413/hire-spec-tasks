@@ -1,0 +1,40 @@
+Task: Secure Container Startup and Storage Initialization
+
+Context & Overview:
+You are deploying a Python application (app.py) that listens on HTTP port 8000. During container startup, the application initializes by writing status logs to /app/write-here.txt.
+
+In the target environment:
+- The path /app/write-here.txt is mounted from a host file (/root/write-here.txt) owned by root with strict permissions.
+- Security guidelines strictly prohibit running container application processes as root.
+- A standard static "USER" directive in the Dockerfile will cause the application to fail at startup with permission errors, as the unprivileged user cannot write to the root-owned mount.
+
+Your objective is to update the Dockerfile and configure the container startup behavior so that the application can initialize the mounted path on startup while ensuring the application process runs under a non-root user.
+
+Task Requirements:
+1. Base your container image on python:3.12-slim.
+2. Ensure the container process does NOT run as root (UID 0) at runtime.
+3. Ensure the container handles runtime setup for the mounted path /app/write-here.txt without permission failures.
+4. Expose and serve the application on port 8000.
+
+Acceptance Criteria:
+- The image builds successfully.
+- When started with a root-owned volume mount (-v /root/write-here.txt:/app/write-here.txt), the container starts cleanly without crashing.
+- The main running process inside the container is executed by an unprivileged user (non-root).
+- The file /app/write-here.txt is successfully created/updated with "Container started successfully!".
+- HTTP requests to http://localhost:8000/ return HTTP 200 OK.
+
+Local Verification Commands:
+1. Build your image:
+   docker build -t app-lab-test .
+
+2. Run the container with the host volume mount:
+   docker run -d -p 8000:8000 -v /root/write-here.txt:/app/write-here.txt --name test-app app-lab-test
+
+3. Check process user (must not be root / UID 0):
+   docker exec test-app id
+
+4. Verify HTTP endpoint:
+   curl http://localhost:8000/
+
+5. Clean up test container:
+   docker rm -f test-app

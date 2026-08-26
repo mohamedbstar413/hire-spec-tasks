@@ -1,0 +1,7 @@
+FROM docker:with-bash
+
+WORKDIR /exam
+
+COPY Dockerfile .
+
+ENTRYPOINT ["/bin/bash"]

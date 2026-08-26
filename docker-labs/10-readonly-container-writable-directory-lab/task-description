@@ -1,0 +1,19 @@
+Task: Configure Read-Only Container with Writable Temporary Directory
+
+Context & Overview:
+In hardened cloud environments (such as CIS Docker Benchmark and Kubernetes Security Policies), containers are executed with a read-only root filesystem (--read-only) to prevent malicious code injection or unexpected runtime modification of container binaries.
+
+However, application servers often require temporary storage to write PID files, cache, or temporary logs (such as /tmp).
+
+Your objective is to configure the application container and Docker deployment so that the application runs cleanly under a read-only root filesystem while directing all temporary runtime file writes to an allocated writable directory (/tmp).
+
+Task Requirements:
+1. Ensure the Dockerfile and container configuration support running under a read only root filesystem.
+2. Configure temporary file writes to use /tmp as the designated writable directory  
+3. Ensure the container process does NOT attempt to write to immutable root paths outside of designated temporary directories.
+
+Acceptance Criteria:
+- The container image builds successfully.
+- The container executes cleanly when launched with "docker run --read-only --tmpfs /tmp ...".
+- The root filesystem blocks unauthorized writes (returns "Read-only file system" error for writes to /).
+- Temporary file operations inside /tmp succeed without permission errors.

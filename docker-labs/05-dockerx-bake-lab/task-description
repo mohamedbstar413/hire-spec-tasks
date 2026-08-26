@@ -1,0 +1,31 @@
+Task: Fix Docker Buildx Bake Multi-Service Build File
+
+Context & Overview:
+Your team uses Docker Buildx Bake to build container images for a multi-service application (frontend, backend, database) in parallel using a declarative HCL configuration file (docker-bake.hcl).
+
+Currently, running "docker buildx bake" fails due to configuration errors and target mismatches in docker-bake.hcl.
+
+Your objective is to fix docker-bake.hcl so all services build cleanly and are tagged under the "hire-spec/" image namespace.
+
+Task Requirements:
+1. Fix target name references in docker-bake.hcl so "group default" correctly builds all three services: frontend, backend, and database.
+2. Ensure each target context points to its respective directory (./frontend, ./backend, ./database).
+3. Update image tags for all services to use the "hire-spec/" repository namespace:
+   - frontend target  -> hire-spec/frontend:latest
+   - backend target   -> hire-spec/backend:latest
+   - database target  -> hire-spec/database:latest
+4. Ensure running "docker buildx bake --load" completes without errors and loads all three images into Docker.
+
+Acceptance Criteria:
+- Running "docker buildx bake --load" exits with status 0.
+- All three Docker images exist in the local Docker daemon:
+  - hire-spec/frontend:latest
+  - hire-spec/backend:latest
+  - hire-spec/database:latest
+
+Local Verification Commands:
+1. Execute Buildx Bake to build and load all images:
+   docker buildx bake --load
+
+2. Check built images:
+   docker images | grep hire-spec

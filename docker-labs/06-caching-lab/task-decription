@@ -1,0 +1,27 @@
+Task: Optimize Dockerfile for Build Layer Caching
+
+Context & Overview:
+You are provided with a Node.js application (app.js, package.json). Currently, every time a developer changes a line of code in app.js, the Docker build invalidates the cache layer and re-runs "npm install", significantly slowing down CI/CD build pipelines.
+
+Your objective is to optimize the Dockerfile instruction order so that application source code changes do NOT trigger a re-installation of npm dependencies.
+
+Task Requirements:
+1. Modify Dockerfile in the root directory to leverage Docker layer caching efficiently.
+2. Ensure dependency installation (package.json / npm install) is cached independently of application source code changes (app.js).
+3. Ensure the container still builds cleanly and starts the application via "npm start" or "node app.js".
+
+Acceptance Criteria:
+- "COPY package*.json ." (or "COPY package.json .") appears BEFORE "RUN npm install".
+- Copying source code files (app.js / ".") occurs AFTER "RUN npm install".
+- Modifying app.js and re-building the image hits the build cache for the "RUN npm install" step.
+- The built image runs the application successfully on port 3000.
+
+Local Verification Commands:
+1. Initial Build (populates cache):
+   docker build -t node-cache-test .
+
+2. Touch app.js to simulate source code change:
+   touch app.js
+
+3. Re-build image (must hit cache for npm install):
+   docker build -t node-cache-test .

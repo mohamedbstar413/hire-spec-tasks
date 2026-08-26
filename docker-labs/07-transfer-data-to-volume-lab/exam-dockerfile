@@ -1,0 +1,6 @@
+FROM docker:with-bash
+
+WORKDIR /exam
+COPY exam-data /tmp
+
+ENTRYPOINT ["/bin/bash"]

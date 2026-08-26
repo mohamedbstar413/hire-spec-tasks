@@ -1,0 +1,6 @@
+Task: Docker Volume Cleanup and Garbage Collection
+
+Context & Overview:
+Over time, Docker environments accumulate dangling, unused volumes created by short-lived test containers. On this system, a script recently generated 100 unused volumes (volume-1 through volume-100).
+
+Your objective is to perform a system cleanup and safely prune all unused Docker volumes.

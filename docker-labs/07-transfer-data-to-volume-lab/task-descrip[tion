@@ -1,0 +1,25 @@
+Task: Seed Data into a Docker Named Volume
+
+Context & Overview:
+You are provided with a directory containing initial data files (./data/readable.txt). In production, stateful services require initial configuration datasets to be pre-populated into a Docker volume before application containers launch.
+
+Your objective is to create a Docker named volume called "my-data-volume" and transfer all contents of the local ./data directory into it.
+
+Task Requirements:
+1. Create a Docker named volume named "my-data-volume".
+2. Copy/populate the contents of the local ./data directory into the root (/data) of "my-data-volume".
+3. Verify that files (such as readable.txt) exist inside the volume and are accessible to containers mounting "my-data-volume".
+
+Acceptance Criteria:
+- The Docker named volume "my-data-volume" exists.
+- Running a container with "-v my-data-volume:/data" shows /data/readable.txt with content "readable text file".
+
+Local Verification Commands:
+1. Create named volume:
+   docker volume create my-data-volume
+
+2. Copy local ./data files into volume using helper container:
+   docker run --rm -v $(pwd)/data:/source -v my-data-volume:/target alpine cp -r /source/. /target/
+
+3. Verify volume contents:
+   docker run --rm -v my-data-volume:/data alpine cat /data/readable.txt

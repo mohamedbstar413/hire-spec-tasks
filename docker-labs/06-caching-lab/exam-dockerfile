@@ -1,0 +1,9 @@
+FROM docker:with-bash
+
+WORKDIR /exam
+
+COPY app.js .
+COPY package.json .
+
+
+ENTRYPOINT ["/bin/bash"]

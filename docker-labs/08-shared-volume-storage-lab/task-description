@@ -1,0 +1,7 @@
+Task: Configure Shared Storage Volume Across Multiple Containers
+
+Context & Overview:
+You are provided with three separate Dockerfiles (Dockerfile1, Dockerfile2, Dockerfile3) and a test data directory (./testdir/file.txt). In microservices and batch processing workflows, multiple containers often need access to a shared persistent volume to pass data between execution stages.
+
+Your objective is to create a single shared Docker named volume called "shared-volume" and configure all three containers to mount this volume at /shared-data.
+

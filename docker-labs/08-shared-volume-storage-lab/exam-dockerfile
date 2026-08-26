@@ -1,0 +1,9 @@
+FROM docker:with-bash
+
+WORKDIR /exam
+
+COPY Dockerfile1 .
+COPY Dockerfile2 .
+COPY Dockerfile3 .
+
+ENTRYPOINT ["/bin/bash"]

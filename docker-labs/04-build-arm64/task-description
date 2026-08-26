@@ -1,0 +1,17 @@
+Task: Cross-Platform Multi-Architecture Container Build
+
+Context & Overview:
+Modern cloud infrastructures frequently run on ARM64 processors (such as AWS Graviton instances). To prepare applications for deployment to ARM64 servers from any build environment, container images must be compiled for the target CPU architecture.
+
+You are provided with a Dockerfile in the root directory. 
+
+Your objective is to build a container image named "nginx-arm64:latest" targeted specifically for the linux/arm64 architecture.
+
+Task Requirements:
+1. Build the Docker image from the provided Dockerfile in the root directory.
+2. Target the ARM64 platform architecture (linux/arm64).
+3. Tag the resulting image as "nginx-arm64:latest".
+
+Acceptance Criteria:
+- The Docker image "nginx-arm64:latest" exists in the local Docker image store.
+- Inspecting the image architecture metadata ("docker inspect") confirms the target architecture is "arm64" (or "aarch64").
