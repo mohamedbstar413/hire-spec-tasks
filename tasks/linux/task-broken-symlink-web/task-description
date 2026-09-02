@@ -1,0 +1,7 @@
+Troubleshoot and fix a web application outage caused by a broken directory symlink.
+
+Requirements:
+- The local web server fails to serve pages (returning HTTP 404 error) after a content reorganization.
+- The web content files are located in `/var/www/html/v2`, but the Nginx configuration expects content at `/var/www/html/current`.
+- Diagnose the broken symbolic link at `/var/www/html/current`.
+- Update the `/var/www/html/current` symlink to point to `/var/www/html/v2` so that accessing `http://localhost` returns the v2 application successfully.

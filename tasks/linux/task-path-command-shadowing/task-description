@@ -1,0 +1,6 @@
+Troubleshoot and fix a command shadowing issue where typing `ls` produces incorrect error output instead of listing files.
+
+Requirements:
+- Typing `ls` in the terminal currently displays an unexpected system error message (`ERROR: Directory index unavailable...`) instead of listing directory contents.
+- Investigate why `ls` is failing by inspecting command resolution (`type -a ls`, `which ls`) and the environment `PATH` search order.
+- Fix the environment configuration in `/root/.bashrc` and `/root/.profile` (and clean up any shadowing binaries in `/root/scripts`) so that typing `ls` executes the standard system binary (`/bin/ls` or `/usr/bin/ls`).

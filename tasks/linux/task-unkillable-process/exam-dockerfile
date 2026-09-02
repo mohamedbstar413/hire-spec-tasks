@@ -1,0 +1,76 @@
+FROM bstar999/linux-lab-image:systemd
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update && apt-get install -y \
+    gcc \
+    make \
+    psmisc \
+    procps \
+    sudo \
+    vim \
+    nano \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*
+
+# Create directory for script
+RUN mkdir -p /opt/scripts /var/log/stuck_app
+
+# Write and compile C program that enters D-state (vfork TASK_UNINTERRUPTIBLE)
+RUN cat << 'EOF' > /opt/scripts/stuck_app.c
+#include <stdio.h>
+#include <unistd.h>
+#include <sys/types.h>
+#include <sys/wait.h>
+#include <stdlib.h>
+
+int main() {
+    pid_t pid = vfork();
+    if (pid == 0) {
+        while (1) {
+            sleep(3600);
+        }
+    } else if (pid > 0) {
+        while (1) {
+            sleep(3600);
+        }
+    }
+    return 0;
+}
+EOF
+
+RUN gcc -O2 /opt/scripts/stuck_app.c -o /opt/scripts/stuck_app && \
+    chmod +x /opt/scripts/stuck_app
+
+# Create systemd service for stuck_app
+RUN cat << 'EOF' > /etc/systemd/system/stuck-app.service
+[Unit]
+Description=Legacy App Server Process
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/opt/scripts/stuck_app
+Restart=always
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+RUN systemctl enable stuck-app.service
+
+# Create dummy nfs/mount hint log file in /var/log/nfs-mount.log for scenario context
+RUN cat << 'EOF' > /var/log/nfs-mount.log
+[WARN] /mnt/remote_nfs connection timeout. I/O thread blocked on kernel wait.
+EOF
+
+# Ensure candidate user exists with passwordless sudo access
+RUN id candidate >/dev/null 2>&1 || useradd -m -s /bin/bash candidate && \
+    echo "candidate ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/candidate && \
+    chmod 0440 /etc/sudoers.d/candidate
+
+USER root
+WORKDIR /root
+
+STOPSIGNAL SIGRTMIN+3
+CMD ["/sbin/init"]

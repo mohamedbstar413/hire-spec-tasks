@@ -1,0 +1,51 @@
+FROM bstar999/linux-lab-image:systemd
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update && apt-get install -y \
+    nginx \
+    curl \
+    sudo \
+    vim \
+    nano \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*
+
+# Setup web content directory v2
+RUN mkdir -p /var/www/html/v2 && \
+    echo "<html><body><h1>Welcome to App v2</h1></body></html>" > /var/www/html/v2/index.html
+
+# Remove default nginx index if present and create BROKEN symlink 'current' pointing to non-existent 'v1'
+RUN rm -f /var/www/html/index.nginx-debian.html && \
+    ln -sf /var/www/html/v1 /var/www/html/current
+
+# Configure Nginx site root to point to /var/www/html/current
+RUN cat << 'EOF' > /etc/nginx/sites-available/default
+server {
+    listen 80 default_server;
+    listen [::]:80 default_server;
+
+    root /var/www/html/current;
+    index index.html index.htm;
+
+    server_name _;
+
+    location / {
+        try_files $uri $uri/ =404;
+    }
+}
+EOF
+
+# Ensure Nginx service is enabled
+RUN systemctl enable nginx
+
+# Ensure candidate user exists with passwordless sudo access
+RUN id candidate >/dev/null 2>&1 || useradd -m -s /bin/bash candidate && \
+    echo "candidate ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/candidate && \
+    chmod 0440 /etc/sudoers.d/candidate
+
+USER root
+WORKDIR /root
+
+STOPSIGNAL SIGRTMIN+3
+CMD ["/sbin/init"]

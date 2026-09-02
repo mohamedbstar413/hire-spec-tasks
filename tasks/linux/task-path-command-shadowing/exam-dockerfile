@@ -1,0 +1,39 @@
+FROM bstar999/linux-lab-image:systemd
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update && apt-get install -y \
+    coreutils \
+    sudo \
+    bash \
+    vim \
+    nano \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*
+
+# Create custom scripts directory shadowing system commands
+RUN mkdir -p /root/scripts
+
+# Create fake 'ls' script in /root/scripts/ls
+RUN cat << 'EOF' > /root/scripts/ls
+#!/bin/bash
+echo "ERROR: Directory index unavailable. System storage driver offline (code 0x8849)."
+exit 1
+EOF
+
+RUN chmod +x /root/scripts/ls
+
+# Inject /root/scripts to the BEGINNING of PATH in /root/.bashrc and /root/.profile
+RUN echo 'export PATH="/root/scripts:$PATH"' >> /root/.bashrc && \
+    echo 'export PATH="/root/scripts:$PATH"' >> /root/.profile
+
+# Ensure candidate user exists with passwordless sudo access
+RUN id candidate >/dev/null 2>&1 || useradd -m -s /bin/bash candidate && \
+    echo "candidate ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/candidate && \
+    chmod 0440 /etc/sudoers.d/candidate
+
+USER root
+WORKDIR /root
+
+STOPSIGNAL SIGRTMIN+3
+CMD ["/sbin/init"]

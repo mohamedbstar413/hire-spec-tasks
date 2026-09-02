@@ -1,0 +1,7 @@
+Diagnose and terminate a process stuck in uninterruptible sleep (D state).
+
+Requirements:
+- A misbehaving legacy application process (`/opt/scripts/stuck_app`) is stuck and refusing to terminate even after issuing `kill -9 <pid>`.
+- Diagnose why the process is ignoring signals by inspecting process states (`ps aux`, `ps -eo pid,stat,wchan,cmd`, or `pstree`).
+- Identify the blocking dependency or child process causing the kernel `D` state.
+- Successfully terminate the stuck process so that no `stuck_app` process remains in `ps aux`.
