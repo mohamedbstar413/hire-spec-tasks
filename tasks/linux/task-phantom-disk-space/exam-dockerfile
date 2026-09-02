@@ -1,0 +1,77 @@
+FROM bstar999/linux-lab-image:systemd
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Install required packages (lsof, python3, procps, etc.)
+RUN apt-get update && apt-get install -y \
+    lsof \
+    procps \
+    python3 \
+    curl \
+    sudo \
+    vim \
+    nano \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*
+
+# Create mount directory and setup script
+RUN mkdir -p /exam/mnt /opt/lab
+
+RUN cat << 'EOF' > /opt/lab/setup_fault.sh
+#!/bin/bash
+set -e
+
+# Mount 500M tmpfs filesystem on /exam/mnt
+mkdir -p /exam/mnt
+mount -t tmpfs -o size=500M tmpfs /exam/mnt
+
+# Create small visible files
+echo "server_status=active" > /exam/mnt/server.conf
+echo "system log entry 1" > /exam/mnt/system.log
+
+# Create 450M large log file
+dd if=/dev/zero of=/exam/mnt/ghost_service.log bs=1M count=450
+
+# Start background python process holding open file descriptor
+python3 -c "
+import time, os
+print('Phantom hog process started PID:', os.getpid())
+f = open('/exam/mnt/ghost_service.log', 'r')
+while True:
+    time.sleep(10)
+" &
+
+# Give python process time to open file handle, then delete the file entry
+sleep 2
+rm -f /exam/mnt/ghost_service.log
+EOF
+
+RUN chmod +x /opt/lab/setup_fault.sh
+
+# Create systemd service to run setup_fault.sh on boot
+RUN cat << 'EOF' > /etc/systemd/system/setup-fault.service
+[Unit]
+Description=Setup Lab Fault
+After=network.target
+
+[Service]
+Type=oneshot
+ExecStart=/opt/lab/setup_fault.sh
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+RUN systemctl enable setup-fault.service
+
+# Ensure candidate user exists with passwordless sudo access
+RUN id candidate >/dev/null 2>&1 || useradd -m -s /bin/bash candidate && \
+    echo "candidate ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/candidate && \
+    chmod 0440 /etc/sudoers.d/candidate
+
+USER root
+WORKDIR /root
+
+STOPSIGNAL SIGRTMIN+3
+CMD ["/sbin/init"]

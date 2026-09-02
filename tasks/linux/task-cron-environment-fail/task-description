@@ -1,0 +1,6 @@
+Troubleshoot and fix a cron backup job that works when executed manually but fails on schedule.
+
+Requirements:
+- A backup script located at /opt/scripts/backup.sh works when run interactively, but the automated cron job in /etc/cron.d/app-backup fails to produce backups.
+- Diagnose and resolve the execution environment discrepancies (such as PATH and environment variable definitions) so that the automated cron job succeeds non-interactively.
+- Ensure that valid, non-empty backup files (db-backup.sql.zst) are automatically created in /var/backups/app/.

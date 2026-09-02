@@ -1,0 +1,6 @@
+Troubleshoot and reclaim phantom disk space consumed on a mounted filesystem.
+
+Requirements:
+- Investigate the filesystem mounted at /exam/mnt which is reporting near 100% disk usage according to df, despite du listing very small file sizes.
+- Identify the process holding open file descriptors for deleted files on /exam/mnt.
+- Reclaim the disk space on /exam/mnt so that df reports less than 20% disk usage.

@@ -1,0 +1,7 @@
+Deploy a Python application located at ~/app.py as a managed systemd service named webapp.
+
+Requirements:
+- The application must reside at /opt/webapp/app.py and run under a dedicated non-interactive system user named "webapp".
+- Configure the service environment so the application listens on port 5000.
+- Ensure the service is enabled to start automatically on boot.
+- Configure automatic failure recovery so the service restarts if the process crashes or is killed.

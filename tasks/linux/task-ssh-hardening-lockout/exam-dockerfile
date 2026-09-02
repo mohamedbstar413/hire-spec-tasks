@@ -1,0 +1,35 @@
+FROM bstar999/linux-lab-image:systemd
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update && apt-get install -y \
+    openssh-server \
+    netcat-openbsd \
+    sudo \
+    vim \
+    nano \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*
+
+# Fault 1: Inject invalid cipher directive into drop-in hardening config
+RUN mkdir -p /etc/ssh/sshd_config.d && cat << 'EOF' > /etc/ssh/sshd_config.d/99-hardening.conf
+# Routine Security Hardening Drop-in
+Port 22
+PermitRootLogin no
+PasswordAuthentication yes
+Ciphers invalid-cipher-aes256-cbc
+EOF
+
+# Fault 2: Corrupt permissions on host private keys (0644 instead of 0600)
+RUN chmod 644 /etc/ssh/ssh_host_rsa_key /etc/ssh/ssh_host_ecdsa_key /etc/ssh/ssh_host_ed25519_key
+
+# Ensure candidate user exists with passwordless sudo access
+RUN id candidate >/dev/null 2>&1 || useradd -m -s /bin/bash candidate && \
+    echo "candidate ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/candidate && \
+    chmod 0440 /etc/sudoers.d/candidate
+
+USER root
+WORKDIR /root
+
+STOPSIGNAL SIGRTMIN+3
+CMD ["/sbin/init"]

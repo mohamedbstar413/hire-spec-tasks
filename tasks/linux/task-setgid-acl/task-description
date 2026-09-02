@@ -1,0 +1,8 @@
+Onboard a new development team and set up their shared project workspace.
+
+Requirements:
+- Create a group named "devteam" containing users "alice", "bob", and "carol" with standard bash login shells.
+- Configure a shared workspace directory at /srv/projects/webapp owned by root:devteam.
+- Ensure that any new files or subdirectories created under /srv/projects/webapp automatically inherit the "devteam" group ownership.
+- Configure access permissions on /srv/projects/webapp so that user "alice" has read-only access, while users "bob" and "carol" have read-write access.
+- Temporarily suspend user "carol" so that account login is denied.

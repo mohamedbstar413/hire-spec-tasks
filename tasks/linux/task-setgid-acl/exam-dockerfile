@@ -1,0 +1,23 @@
+FROM bstar999/linux-lab-image:systemd
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Install ACL utilities, shadow user management tools, and sudo
+RUN apt-get update && apt-get install -y \
+    acl \
+    sudo \
+    shadow \
+    coreutils \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*
+
+# Create candidate user with passwordless sudo access for lab execution
+RUN useradd -m -s /bin/bash candidate && \
+    echo "candidate ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/candidate && \
+    chmod 0440 /etc/sudoers.d/candidate
+
+USER root
+WORKDIR /root
+
+STOPSIGNAL SIGRTMIN+3
+CMD ["/sbin/init"]

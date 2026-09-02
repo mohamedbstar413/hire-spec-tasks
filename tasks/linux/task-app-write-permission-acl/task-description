@@ -1,0 +1,7 @@
+Troubleshoot a web application directory write failure despite correct standard POSIX ownership and permissions.
+
+Requirements:
+- A web application running as user `appuser` is unable to write files to `/var/www/uploads`, returning `Permission denied`.
+- Standard permissions (`ls -la /var/www`) show `drwxrwxr-x` owned by `appuser:appuser`, but write operations fail.
+- Diagnose the extended ACL permissions (such as ACL masks or user-specific entry overrides using `getfacl`).
+- Remove or correct the restrictive ACL entries so that `appuser` can successfully write files into `/var/www/uploads`.

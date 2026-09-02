@@ -1,0 +1,14 @@
+Task: Network Troubleshooting Chain (Unreachable CRM Server)
+
+Context & Overview:
+A colleague reports that the internal web application at `crm.internal` (IP: 10.5.0.20) has suddenly become unreachable from the client machine. You are dropped into the situation to troubleshoot layer by layer (reachability, DNS, service port, firewall), isolate the root cause, and apply a fix that survives system reboots.
+
+Task Requirements:
+1. Diagnose why HTTP traffic to `crm.internal` (port 80) is failing.
+2. Resolve the firewall blockage on `crm.internal`.
+3. Ensure the updated firewall rules are saved persistently to `/etc/iptables/rules.v4` so HTTP access survives reboots.
+
+Acceptance Criteria:
+- `curl -sf http://crm.internal` returns HTTP 200 OK from the terminal client.
+- The blocking DROP rule on port 80 is removed from active `iptables`.
+- The firewall persistence file `/etc/iptables/rules.v4` contains no blocking DROP rules for port 80.

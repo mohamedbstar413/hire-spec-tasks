@@ -1,0 +1,42 @@
+FROM bstar999/linux-lab-image:systemd
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Install iptables, persistent rules, openssh, and troubleshooting utilities
+RUN apt-get update && apt-get install -y \
+    iptables \
+    iptables-persistent \
+    openssh-server \
+    curl \
+    iputils-ping \
+    net-tools \
+    iproute2 \
+    sudo \
+    vim \
+    nano \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*
+
+# Pre-seed /var/log/auth.log with failed SSH login logs
+RUN mkdir -p /var/log && cat << 'EOF' > /var/log/auth.log
+May 10 14:00:01 server sshd[1001]: Failed password for invalid user admin from 192.168.1.105 port 42101 ssh2
+May 10 14:00:05 server sshd[1002]: Failed password for invalid user root from 192.168.1.105 port 42102 ssh2
+May 10 14:00:09 server sshd[1003]: Failed password for root from 192.168.1.105 port 42103 ssh2
+May 10 14:00:12 server sshd[1004]: Failed password for invalid user test from 192.168.1.105 port 42104 ssh2
+May 10 14:00:15 server sshd[1005]: Failed password for root from 192.168.1.105 port 42105 ssh2
+May 10 14:00:18 server sshd[1006]: Failed password for root from 192.168.1.105 port 42106 ssh2
+May 10 14:01:00 server sshd[1007]: Failed password for invalid user admin from 10.0.2.50 port 33101 ssh2
+May 10 14:01:05 server sshd[1008]: Failed password for user alice from 10.0.2.50 port 33102 ssh2
+May 10 14:02:00 server sshd[1009]: Accepted password for bob from 10.0.1.20 port 51101 ssh2
+EOF
+
+# Ensure candidate user exists with passwordless sudo access
+RUN id candidate >/dev/null 2>&1 || useradd -m -s /bin/bash candidate && \
+    echo "candidate ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/candidate && \
+    chmod 0440 /etc/sudoers.d/candidate
+
+USER root
+WORKDIR /root
+
+STOPSIGNAL SIGRTMIN+3
+CMD ["/sbin/init"]

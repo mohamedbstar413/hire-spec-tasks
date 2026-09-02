@@ -1,0 +1,103 @@
+FROM bstar999/linux-lab-image:systemd
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Install python3, archiving tools, and utilities
+RUN apt-get update && apt-get install -y \
+    python3 \
+    tar \
+    gzip \
+    curl \
+    sudo \
+    vim \
+    nano \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*
+
+# Create directory structure
+RUN mkdir -p /var/www/appdata /var/backups/app /opt/webapp
+
+# Create pristine app data and checksums
+RUN echo '{"status": "ok", "db_version": "1.4.2", "records": 1500, "integrity": "clean"}' > /var/www/appdata/config.json && \
+    echo 'DATA_RECORD_001_VALID_USER_DATA_PRISTINE' > /var/www/appdata/app.db && \
+    cd /var/www/appdata && sha256sum config.json app.db > checksums.txt
+
+# Generation 1 (Old Backup - Aug 29)
+RUN cd /var/www && tar -czf /var/backups/app/backup_2026-08-29.tar.gz appdata
+
+# Generation 2 (PRISTINE GOOD BACKUP - Aug 31)
+RUN cd /var/www && tar -czf /var/backups/app/backup_2026-08-31.tar.gz appdata
+
+# Introduce Fault / Data Corruption in Live Directory
+RUN echo 'CORRUPTED_ZERO_DATA_HEADER_FAILED' > /var/www/appdata/app.db && \
+    echo '{"status": "error", "corrupted": true}' > /var/www/appdata/config.json
+
+# Generation 3 (Corrupted Recent Backup - Sept 01)
+RUN cd /var/www && tar -czf /var/backups/app/backup_2026-09-01.tar.gz appdata
+
+# Create simple python webapp that serves /health check based on data integrity
+RUN cat << 'EOF' > /opt/webapp/app.py
+import http.server
+import json
+
+PORT = 5000
+
+class HealthHandler(http.server.BaseHTTPRequestHandler):
+    def do_GET(self):
+        if self.path == '/health':
+            try:
+                with open('/var/www/appdata/app.db', 'r') as f:
+                    db_content = f.read()
+                with open('/var/www/appdata/config.json', 'r') as f:
+                    cfg = json.load(f)
+                
+                if 'PRISTINE' in db_content and cfg.get('status') == 'ok':
+                    self.send_response(200)
+                    self.send_header('Content-type', 'application/json')
+                    self.end_headers()
+                    self.wfile.write(b'{"status": "healthy", "database": "online"}\n')
+                    return
+            except Exception:
+                pass
+            
+            self.send_response(500)
+            self.send_header('Content-type', 'application/json')
+            self.end_headers()
+            self.wfile.write(b'{"status": "unhealthy", "error": "Database Corrupted"}\n')
+        else:
+            self.send_response(404)
+            self.end_headers()
+
+if __name__ == '__main__':
+    server = http.server.HTTPServer(('0.0.0.0', PORT), HealthHandler)
+    server.serve_forever()
+EOF
+
+# Create systemd service for webapp
+RUN cat << 'EOF' > /etc/systemd/system/webapp.service
+[Unit]
+Description=Application Service
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 /opt/webapp/app.py
+Restart=always
+User=root
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+RUN systemctl enable webapp.service
+
+# Ensure candidate user exists with passwordless sudo access
+RUN id candidate >/dev/null 2>&1 || useradd -m -s /bin/bash candidate && \
+    echo "candidate ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/candidate && \
+    chmod 0440 /etc/sudoers.d/candidate
+
+USER root
+WORKDIR /root
+
+STOPSIGNAL SIGRTMIN+3
+CMD ["/sbin/init"]

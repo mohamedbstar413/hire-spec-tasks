@@ -1,0 +1,70 @@
+FROM bstar999/linux-lab-image:systemd
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Install cron, python3, tar, zstd, and diagnostic utilities
+RUN apt-get update && apt-get install -y \
+    cron \
+    tar \
+    zstd \
+    curl \
+    sudo \
+    vim \
+    nano \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*
+
+# Create directories
+RUN mkdir -p /opt/scripts /var/backups/app /usr/local/bin
+
+# Create custom dummy backup helper binary in /usr/local/bin (NOT in /usr/bin)
+RUN cat << 'EOF' > /usr/local/bin/backup-compressor
+#!/bin/bash
+# Helper tool located in /usr/local/bin
+zstd -c "$@"
+EOF
+
+RUN chmod +x /usr/local/bin/backup-compressor
+
+# Create sample database file to back up
+RUN mkdir -p /var/lib/appdb && \
+    echo "SAMPLE_DATABASE_TABLE_DATA_PRISTINE_RECORDS" > /var/lib/appdb/data.db
+
+# Create faulty backup.sh script in /opt/scripts/backup.sh
+# Faults:
+# 1. Relies on $BACKUP_DIR (empty in cron)
+# 2. Relies on 'backup-compressor' binary in /usr/local/bin (not in cron PATH)
+RUN cat << 'EOF' > /opt/scripts/backup.sh
+#!/bin/bash
+# Daily Application Backup Script
+
+mkdir -p "$BACKUP_DIR"
+cat /var/lib/appdb/data.db | backup-compressor > "$BACKUP_DIR/db-backup.sql.zst"
+EOF
+
+RUN chmod +x /opt/scripts/backup.sh
+
+# Set up environment variables in /root/.bashrc so manual execution WORKS
+RUN echo 'export BACKUP_DIR="/var/backups/app"' >> /root/.bashrc && \
+    echo 'export PATH="/usr/local/bin:$PATH"' >> /root/.bashrc
+
+# Create cron job in /etc/cron.d/app-backup (Runs every minute, redirects output to /dev/null)
+RUN cat << 'EOF' > /etc/cron.d/app-backup
+* * * * * root /opt/scripts/backup.sh > /dev/null 2>&1
+EOF
+
+RUN chmod 0644 /etc/cron.d/app-backup
+
+# Ensure cron daemon starts on container boot
+RUN systemctl enable cron
+
+# Ensure candidate user exists with passwordless sudo access
+RUN id candidate >/dev/null 2>&1 || useradd -m -s /bin/bash candidate && \
+    echo "candidate ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/candidate && \
+    chmod 0440 /etc/sudoers.d/candidate
+
+USER root
+WORKDIR /root
+
+STOPSIGNAL SIGRTMIN+3
+CMD ["/sbin/init"]

@@ -1,0 +1,39 @@
+version: '3.8'
+
+services:
+  # REQUIRED: Main candidate interactive terminal container
+  terminal:
+    build:
+      context: .
+      dockerfile: Dockerfile.terminal
+    container_name: terminal
+    hostname: terminal
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
+    networks:
+      lab-network:
+        ipv4_address: 10.5.0.10
+    restart: unless-stopped
+
+  # Target CRM web application container
+  crm.internal:
+    build:
+      context: .
+      dockerfile: Dockerfile.crm
+    container_name: crm.internal
+    hostname: crm.internal
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
+    networks:
+      lab-network:
+        ipv4_address: 10.5.0.20
+    restart: unless-stopped
+
+networks:
+  lab-network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 10.5.0.0/24

@@ -1,0 +1,6 @@
+Analyze authentication log files to identify and block an active SSH brute-force attacker.
+
+Requirements:
+- Inspect /var/log/auth.log to identify the IP address responsible for repeated failed SSH login attempts (exceeding 5 failed attempts).
+- Block incoming network traffic from the identified attacker IP address.
+- Save the updated firewall configuration persistently

@@ -1,0 +1,7 @@
+Troubleshoot and restore SSH access after a security hardening script locked out administrative connections.
+
+Requirements:
+- Investigate why the SSH daemon (sshd) fails to start.
+- Resolve any configuration syntax errors in /etc/ssh/sshd_config or /etc/ssh/sshd_config.d/.
+- Correct file permissions on SSH host private keys (/etc/ssh/ssh_host_*_key) so OpenSSH accepts them.
+- Ensure the sshd service is active and accepting connections on port 22.

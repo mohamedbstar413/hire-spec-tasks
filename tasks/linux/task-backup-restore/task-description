@@ -1,0 +1,6 @@
+Identify and restore the correct uncorrupted backup archive to recover a failed application database.
+
+Requirements:
+- Investigate the backup archives stored in /var/backups/app/ to identify the latest valid, uncorrupted backup generation.
+- Restore the uncorrupted backup files into /var/www/appdata/ so that all files match the reference hashes in /var/www/appdata/checksums.txt.
+- Restart the webapp service (systemctl restart webapp.service) and confirm that the HTTP endpoint http://localhost:5000/health returns HTTP 200 OK.

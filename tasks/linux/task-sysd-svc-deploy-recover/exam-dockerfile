@@ -1,0 +1,29 @@
+FROM bstar999/linux-lab-image:systemd
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Install Python 3, networking utilities, systemd, and sudo
+RUN apt-get update && apt-get install -y \
+    python3 \
+    curl \
+    iproute2 \
+    procps \
+    sudo \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*
+
+# Create candidate user with passwordless sudo access for lab execution
+RUN useradd -m -s /bin/bash candidate && \
+    echo "candidate ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/candidate && \
+    chmod 0440 /etc/sudoers.d/candidate
+
+# Copy starter dummy python application into candidate home directory
+COPY app.py /home/candidate/app.py
+RUN chown candidate:candidate /home/candidate/app.py && \
+    chmod 755 /home/candidate/app.py
+
+USER root
+WORKDIR /root
+
+STOPSIGNAL SIGRTMIN+3
+CMD ["/sbin/init"]
