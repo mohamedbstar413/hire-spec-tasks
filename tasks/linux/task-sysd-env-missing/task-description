@@ -1,0 +1,7 @@
+Troubleshoot and fix a systemd service crash-loop caused by a missing environment variable.
+
+Requirements:
+- The service `configapp.service` is crash-looping with `FATAL: API_KEY is not set`, even though running `/opt/configapp/app.py` or `echo $API_KEY` in an interactive shell works.
+- Configure systemd service `configapp.service` to provide the required environment variable `API_KEY` (using `Environment=` or `EnvironmentFile=` in the unit file or drop-in override).
+- Reload systemd (`systemctl daemon-reload`) and restart `configapp.service`.
+- Ensure `systemctl is-active configapp` returns `active` and service logs confirm execution.

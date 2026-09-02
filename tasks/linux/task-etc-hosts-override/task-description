@@ -1,0 +1,7 @@
+Troubleshoot and fix a hostname resolution failure caused by a stale static entry in `/etc/hosts`.
+
+Requirements:
+- Running `/opt/hostcheck/check.sh` times out or fails when connecting to `http://internal-api.company.local:8081/health`, even though the local web service on port 8081 is active.
+- Investigate why `internal-api.company.local` resolves to an unreachable IP address (`203.0.113.50`).
+- Update or remove the stale entry in `/etc/hosts` so that `internal-api.company.local` resolves to `127.0.0.1` (localhost).
+- Ensure running `/opt/hostcheck/check.sh` outputs HTTP status `200` successfully.

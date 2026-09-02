@@ -1,0 +1,65 @@
+FROM bstar999/linux-lab-image:systemd
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update && apt-get install -y \
+    python3 \
+    procps \
+    sudo \
+    curl \
+    vim \
+    nano \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*
+
+# Create application directory and script
+RUN mkdir -p /opt/pidapp /run/pidapp
+
+RUN cat << 'EOF' > /opt/pidapp/app.py
+import os, sys, time
+
+pidfile = "/run/pidapp/app.pid"
+if os.path.exists(pidfile):
+    sys.exit(f"FATAL: already running (pidfile {pidfile} exists)")
+
+with open(pidfile, "w") as f:
+    f.write(str(os.getpid()))
+
+print("Started cleanly", flush=True)
+while True:
+    time.sleep(3600)
+EOF
+
+RUN chmod +x /opt/pidapp/app.py
+
+# Inject stale PID file (PID 99999 does not exist)
+RUN echo "99999" > /run/pidapp/app.pid
+
+# Create systemd service unit
+RUN cat << 'EOF' > /etc/systemd/system/pidapp.service
+[Unit]
+Description=PID App Service
+After=network.target
+
+[Service]
+ExecStart=/usr/bin/python3 /opt/pidapp/app.py
+Restart=on-failure
+RestartSec=2s
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+# Enable systemd service on boot
+RUN systemctl enable pidapp.service
+
+# Ensure candidate user exists with passwordless sudo access
+RUN id candidate >/dev/null 2>&1 || useradd -m -s /bin/bash candidate && \
+    echo "candidate ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/candidate && \
+    chmod 0440 /etc/sudoers.d/candidate
+
+USER root
+WORKDIR /root
+
+STOPSIGNAL SIGRTMIN+3
+CMD ["/sbin/init"]

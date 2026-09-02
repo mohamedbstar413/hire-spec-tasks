@@ -1,0 +1,7 @@
+Troubleshoot and fix an application startup failure caused by a stale PID lockfile.
+
+Requirements:
+- The service `pidapp.service` (and manual execution of `/opt/pidapp/app.py`) fails to start, returning `FATAL: already running (pidfile /run/pidapp/app.pid exists)`.
+- Inspect running processes (`ps aux`, `ps -p 99999`) to confirm no process with PID 99999 or `app.py` is running.
+- Remove or resolve the stale PID lockfile at `/run/pidapp/app.pid`.
+- Start `pidapp.service` and verify that `systemctl is-active pidapp` returns `active` and prints `Started cleanly`.

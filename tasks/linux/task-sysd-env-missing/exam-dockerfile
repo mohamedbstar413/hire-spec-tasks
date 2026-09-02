@@ -1,0 +1,60 @@
+FROM bstar999/linux-lab-image:systemd
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update && apt-get install -y \
+    python3 \
+    sudo \
+    curl \
+    vim \
+    nano \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*
+
+# Create application directory and script
+RUN mkdir -p /opt/configapp
+
+RUN cat << 'EOF' > /opt/configapp/app.py
+import os, sys, time
+
+key = os.environ.get("API_KEY")
+if not key:
+    sys.exit("FATAL: API_KEY is not set")
+
+print(f"Started with key: {key}", flush=True)
+while True:
+    time.sleep(3600)
+EOF
+
+# Create systemd service unit WITHOUT Environment= definition
+RUN cat << 'EOF' > /etc/systemd/system/configapp.service
+[Unit]
+Description=Config App
+After=network.target
+
+[Service]
+ExecStart=/usr/bin/python3 /opt/configapp/app.py
+Restart=on-failure
+RestartSec=2s
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+# Pre-seed API_KEY in /root/.bashrc and /root/.profile for interactive shell testing
+RUN echo 'export API_KEY="abc123secret"' >> /root/.bashrc && \
+    echo 'export API_KEY="abc123secret"' >> /root/.profile
+
+# Enable systemd service on boot
+RUN systemctl enable configapp.service
+
+# Ensure candidate user exists with passwordless sudo access
+RUN id candidate >/dev/null 2>&1 || useradd -m -s /bin/bash candidate && \
+    echo "candidate ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/candidate && \
+    chmod 0440 /etc/sudoers.d/candidate
+
+USER root
+WORKDIR /root
+
+STOPSIGNAL SIGRTMIN+3
+CMD ["/sbin/init"]
