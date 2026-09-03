@@ -1,0 +1,66 @@
+FROM bstar999/docker:with-bash
+
+# Install diagnostic utilities
+RUN apt-get update && apt-get install -y \
+    curl \
+    git \
+    sudo \
+    vim \
+    nano \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*
+
+# Create application directory structure
+RUN mkdir -p /app/backend /app/frontend
+
+# Create Backend Application & Dockerfile
+RUN cat << 'EOF' > /app/backend/server.py
+from flask import Flask
+app = Flask(__name__)
+
+@app.route('/api/data')
+def get_data():
+    return {"status": "success", "message": "Backend connected successfully!"}, 200
+
+if __name__ == '__main__':
+    app.run(host='0.0.0.0', port=5000)
+EOF
+
+RUN cat << 'EOF' > /app/backend/Dockerfile
+FROM python:3.9-slim
+WORKDIR /app
+RUN pip install flask
+COPY server.py .
+EXPOSE 5000
+CMD ["python3", "server.py"]
+EOF
+
+# Create Frontend Application & Dockerfile
+RUN cat << 'EOF' > /app/frontend/client.py
+import requests, sys, time
+
+url = "http://backend-api:5000/api/data"
+print(f"Connecting to backend service at {url}...", flush=True)
+
+try:
+    resp = requests.get(url, timeout=5)
+    print(f"Backend Response Code: {resp.status_code}", flush=True)
+    print(f"Backend Response Body: {resp.text}", flush=True)
+except Exception as e:
+    print(f"FAILED to connect to backend: {e}", file=sys.stderr, flush=True)
+    sys.exit(1)
+
+while True:
+    time.sleep(3600)
+EOF
+
+RUN cat << 'EOF' > /app/frontend/Dockerfile
+FROM python:3.9-slim
+WORKDIR /app
+RUN pip install requests
+COPY client.py .
+CMD ["python3", "client.py"]
+EOF
+
+USER root
+WORKDIR /app

@@ -1,0 +1,8 @@
+Diagnose and fix a Docker container build and runtime failure where the container exits immediately with Exit Code 1.
+
+Requirements:
+- Located in `/app`, you will find a `Dockerfile` and `app.py`.
+- Build the initial image (`docker build -t myapp:latest /app`) and run it (`docker run myapp:latest`). Observe that the container exits immediately with Exit Code 1.
+- Inspect container logs (`docker logs`) and container state (`docker inspect`) to identify the missing environment variable (`DB_PORT`).
+- Update `/app/Dockerfile` to include `ENV DB_PORT=5432` (or configure the required environment variable).
+- Rebuild the image (`docker build -t myapp:latest /app`) and ensure running `docker run -d --name myapp_container myapp:latest` produces an active, running container (`Status: running`).

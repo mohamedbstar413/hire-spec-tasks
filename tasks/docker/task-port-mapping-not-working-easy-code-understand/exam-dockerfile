@@ -1,0 +1,43 @@
+FROM bstar999/docker:with-bash
+
+# Install diagnostic utilities
+RUN apt-get update && apt-get install -y \
+    curl \
+    git \
+    sudo \
+    vim \
+    nano \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*
+
+# Create application directory
+RUN mkdir -p /app
+
+# Create Python application bound to 127.0.0.1 (FAULT)
+RUN cat << 'EOF' > /app/app.py
+from flask import Flask
+import os
+
+app = Flask(__name__)
+
+@app.route('/')
+def index():
+    return "Port Mapping Fixed! Application reachable externally.\n", 200
+
+if __name__ == '__main__':
+    # FAULT: Bound to 127.0.0.1 instead of 0.0.0.0
+    app.run(host='127.0.0.1', port=3000)
+EOF
+
+# Create Dockerfile in /app
+RUN cat << 'EOF' > /app/Dockerfile
+FROM python:3.9-slim
+WORKDIR /app
+RUN pip install flask
+COPY app.py .
+EXPOSE 3000
+CMD ["python3", "app.py"]
+EOF
+
+USER root
+WORKDIR /app

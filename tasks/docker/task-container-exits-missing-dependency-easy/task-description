@@ -1,0 +1,9 @@
+Troubleshoot and fix a Docker container crash caused by a missing application dependency.
+
+Requirements:
+- Located in `/app`, you will find a `Dockerfile` and `app.py`.
+- Build the initial image (`docker build -t myapp-web:latest /app`) and run it (`docker run myapp-web:latest`). Observe that the container exits immediately with Exit Code 1.
+- Inspect container logs (`docker logs`) to identify the missing dependency (`ModuleNotFoundError: No module named 'flask'`).
+- Update `/app/Dockerfile` to install the required dependency (`RUN pip install flask`).
+- Rebuild the image (`docker build -t myapp-web:latest /app`) and run a container (`docker run -d -p 5000:5000 --name web_container myapp-web:latest`).
+- Ensure the container remains active in the `running` state and serves HTTP requests.

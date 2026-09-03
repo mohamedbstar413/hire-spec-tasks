@@ -1,0 +1,45 @@
+FROM bstar999/docker:with-bash
+
+# Install diagnostic utilities
+RUN apt-get update && apt-get install -y \
+    curl \
+    git \
+    sudo \
+    vim \
+    nano \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*
+
+# Create application directory
+RUN mkdir -p /app
+
+# Create Python web application using Flask
+RUN cat << 'EOF' > /app/app.py
+import sys
+try:
+    from flask import Flask
+except ImportError as e:
+    print(f"CRITICAL ERROR: Failed to import required web framework dependency!\n{e}", file=sys.stderr)
+    print("Application crashed upon startup. Exiting with status 1...", file=sys.stderr)
+    sys.exit(1)
+
+app = Flask(__name__)
+
+@app.route('/')
+def health():
+    return "App is running smoothly!", 200
+
+if __name__ == '__main__':
+    app.run(host='0.0.0.0', port=5000)
+EOF
+
+# Create faulty Dockerfile in /app (missing RUN pip install flask)
+RUN cat << 'EOF' > /app/Dockerfile
+FROM python:3.9-slim
+WORKDIR /app
+COPY app.py .
+CMD ["python3", "app.py"]
+EOF
+
+USER root
+WORKDIR /app

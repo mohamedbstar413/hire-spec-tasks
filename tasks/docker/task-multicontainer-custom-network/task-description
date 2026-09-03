@@ -1,0 +1,14 @@
+Troubleshoot and resolve a multi-container network resolution failure where containers cannot communicate using container names.
+
+Requirements:
+- Located in `/app`, you will find two subdirectories: `/app/backend` and `/app/frontend`.
+- Build the images for both services:
+  - `docker build -t backend-image /app/backend`
+  - `docker build -t frontend-image /app/frontend`
+- The `frontend-app` container attempts to connect to `http://backend-api:5000/api/data` by container name `backend-api`.
+- By default, containers on the default `bridge` network cannot resolve each other by container name, causing `frontend-app` to fail with DNS lookup errors (`Name or service not known`).
+- Create a custom user-defined Docker bridge network (e.g. `docker network create app-net`).
+- Run both containers on the custom network so that `backend-api` and `frontend-app` can resolve each other by name:
+  - `docker run -d --name backend-api --network app-net backend-image`
+  - `docker run -d --name frontend-app --network app-net frontend-image`
+- Verify that `frontend-app` successfully connects to `backend-api` (HTTP status 200).
