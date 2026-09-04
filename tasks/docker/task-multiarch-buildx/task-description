@@ -1,0 +1,11 @@
+Build a multi-architecture Docker image supporting both `linux/amd64` and `linux/arm64` CPU architectures using `docker buildx`.
+
+Requirements:
+- Located in `/app`, you will find `app.py` and `Dockerfile`.
+- Use Docker Buildx (`docker buildx`) to build a multi-platform image for both `linux/amd64` and `linux/arm64`:
+  1. Create and activate a Buildx builder instance:
+     `docker buildx create --name mybuilder --use`
+  2. Build the image targeting `--platform linux/amd64,linux/arm64`.
+  3. Export the multi-architecture image archive to `/app/myapp-multiarch.tar` using `--output type=oci,dest=/app/myapp-multiarch.tar`:
+     `docker buildx build --platform linux/amd64,linux/arm64 -t myapp-multiarch:latest /app --output type=oci,dest=/app/myapp-multiarch.tar`
+- Verify that `/app/myapp-multiarch.tar` exists and contains manifests for both `amd64` and `arm64` architectures.

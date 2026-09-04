@@ -1,0 +1,47 @@
+FROM bstar999/docker:with-bash
+
+# Install diagnostic utilities & python3
+RUN apt-get update && apt-get install -y \
+    python3 \
+    curl \
+    netcat-openbsd \
+    sudo \
+    vim \
+    nano \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*
+
+# Create application directory
+RUN mkdir -p /app
+
+# Create Python HTTP web server listening on 127.0.0.1:3000
+RUN cat << 'EOF' > /app/app.py
+from http.server import HTTPServer, BaseHTTPRequestHandler
+
+class SimpleHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.send_header('Content-type', 'text/plain')
+        self.end_headers()
+        self.wfile.write(b"OK - WebApp Healthy\n")
+
+if __name__ == '__main__':
+    server = HTTPServer(('127.0.0.1', 3000), SimpleHandler)
+    print("Serving on 127.0.0.1:3000...")
+    server.serve_forever()
+EOF
+
+# Create Dockerfile in /app
+RUN cat << 'EOF' > /app/Dockerfile
+FROM python:3.9-slim
+WORKDIR /app
+COPY app.py .
+EXPOSE 3000
+CMD ["python3", "app.py"]
+EOF
+
+# FAULT INJECTION: Corrupt /etc/hosts in the lab environment so 'localhost' maps to 100.100.100.100
+RUN sed -i 's/127\.0\.0\.1\s\+localhost/100.100.100.100 localhost/' /etc/hosts || echo "100.100.100.100 localhost" >> /etc/hosts
+
+USER root
+WORKDIR /app

@@ -1,0 +1,40 @@
+FROM bstar999/docker:with-bash
+
+# Install diagnostic utilities & python3
+RUN apt-get update && apt-get install -y \
+    python3 \
+    curl \
+    git \
+    sudo \
+    vim \
+    nano \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*
+
+# Create application directory structure
+RUN mkdir -p /app/build_cache /app/node_modules /app/.git
+
+# Create dummy large files in build_cache and node_modules (~150MB total)
+RUN dd if=/dev/zero of=/app/build_cache/large_dataset.bin bs=1M count=80 2>/dev/null
+RUN dd if=/dev/zero of=/app/node_modules/vendor_libs.bin bs=1M count=70 2>/dev/null
+
+# Create Python application in /app/app.py
+RUN cat << 'EOF' > /app/app.py
+import time
+print("App running cleanly!", flush=True)
+while True:
+    time.sleep(3600)
+EOF
+
+# Create Dockerfile in /app/Dockerfile
+RUN cat << 'EOF' > /app/Dockerfile
+FROM python:3.9-slim
+WORKDIR /app
+COPY . .
+CMD ["python3", "app.py"]
+EOF
+
+# NOTE: /app/.dockerignore is intentionally MISSING.
+
+USER root
+WORKDIR /app

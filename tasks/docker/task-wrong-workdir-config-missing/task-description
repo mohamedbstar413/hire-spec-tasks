@@ -1,0 +1,17 @@
+Troubleshoot and fix a Docker container startup crash caused by an incorrect working directory (`WORKDIR`).
+
+Requirements:
+- Located in `/app`, you will find `app.py`, `config.json`, and `Dockerfile`.
+- Build the initial image (`docker build -t myapp-config:latest /app`) and run a container (`docker run myapp-config:latest`).
+- Observe that the container exits immediately with Exit Code 1 and displays:
+  `FATAL ERROR: Could not find configuration file! [Errno 2] No such file or directory: 'config.json'`
+- Diagnose why the application cannot locate `config.json`:
+  - Inspect working directory: `docker inspect myapp-config:latest --format='{{.Config.WorkingDir}}'`
+  - Notice `WORKDIR` is set to `/` instead of `/app`, so relative file access (`open("config.json")`) searches in `/` instead of `/app/`.
+- Fix `/app/Dockerfile`:
+  - Set the working directory to `/app`: `WORKDIR /app`
+  - Update `CMD` to execute `app.py` directly: `CMD ["python3", "app.py"]`
+- Rebuild the image (`docker build -t myapp-config:latest /app`) and run a container (`docker run -d --name config_app myapp-config:latest`).
+- Verify `docker logs config_app` displays:
+  `Current Working Directory (pwd): /app`
+  `SUCCESS: Loaded config successfully! DB Host: localhost`

@@ -1,0 +1,63 @@
+FROM bstar999/docker:with-bash
+
+# Install diagnostic utilities & docker compose
+RUN apt-get update && apt-get install -y \
+    python3 \
+    curl \
+    git \
+    sudo \
+    vim \
+    nano \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*
+
+# Create application directory
+RUN mkdir -p /app
+
+# Create Flask application with /health endpoint
+RUN cat << 'EOF' > /app/app.py
+from flask import Flask
+
+app = Flask(__name__)
+
+@app.route('/')
+def index():
+    return "Main API Service Running\n", 200
+
+@app.route('/health')
+def health():
+    return {"status": "healthy", "service": "api"}, 200
+
+if __name__ == '__main__':
+    app.run(host='0.0.0.0', port=5000)
+EOF
+
+# Create Dockerfile
+RUN cat << 'EOF' > /app/Dockerfile
+FROM python:3.9-slim
+RUN apt-get update && apt-get install -y curl && rm -rf /var/lib/apt/lists/*
+WORKDIR /app
+RUN pip install flask
+COPY app.py .
+EXPOSE 5000
+CMD ["python3", "app.py"]
+EOF
+
+# Create docker-compose.yml with FAULTY healthcheck endpoint (/healthz)
+RUN cat << 'EOF' > /app/docker-compose.yml
+services:
+  web_api:
+    build: .
+    container_name: web_api_service
+    ports:
+      - "5000:5000"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5000/healthz"]
+      interval: 3s
+      timeout: 2s
+      retries: 3
+      start_period: 1s
+EOF
+
+USER root
+WORKDIR /app

@@ -1,0 +1,13 @@
+Troubleshoot and resolve a Docker Compose network isolation issue where the service container is unreachable by its IP address from the host.
+
+Requirements:
+- Located in `/app`, you will find `app.py`, `Dockerfile`, and `docker-compose.yml`.
+- Start the Compose services (`docker compose up -d` or `docker-compose up -d`).
+- Inspect the container's IP address (`docker inspect unreachable_web_app --format='{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}'`).
+- Attempting to ping or connect to the container IP address (e.g. `curl http://<container_ip>:8080`) fails because the network is completely isolated from the host.
+- Diagnose why the container network blocks host routing:
+  - Inspect `docker-compose.yml`.
+  - Notice `networks.isolated_net` has `internal: true` enabled, restricting external network access.
+- Update `/app/docker-compose.yml` to remove `internal: true` (or set `internal: false`).
+- Re-run `docker compose up -d`.
+- Verify that connecting to the container IP address (`curl http://<container_ip>:8080`) returns `OK - Service Accessible`.

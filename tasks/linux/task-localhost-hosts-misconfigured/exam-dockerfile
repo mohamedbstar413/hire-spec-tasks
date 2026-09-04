@@ -1,0 +1,54 @@
+FROM bstar999/linux-lab-image:systemd
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Install python3, curl, netcat, and diagnostic tools
+RUN apt-get update && apt-get install -y \
+    python3 \
+    curl \
+    netcat-openbsd \
+    sudo \
+    vim \
+    nano \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*
+
+# Create application directory
+RUN mkdir -p /opt/webapp
+
+# Create Python HTTP web server listening on 127.0.0.1:3000
+RUN cat << 'EOF' > /opt/webapp/server.py
+from http.server import HTTPServer, BaseHTTPRequestHandler
+
+class SimpleHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.send_header('Content-type', 'text/plain')
+        self.end_headers()
+        self.wfile.write(b"OK - WebApp Healthy\n")
+
+if __name__ == '__main__':
+    server = HTTPServer(('127.0.0.1', 3000), SimpleHandler)
+    print("Serving on 127.0.0.1:3000...")
+    server.serve_forever()
+EOF
+
+# Create systemd service for webapp
+RUN printf '%s\n' \
+  '[Unit]' \
+  'Description=Local Web App Service' \
+  'After=network.target' \
+  '' \
+  '[Service]' \
+  'ExecStart=/usr/bin/python3 /opt/webapp/server.py' \
+  'Restart=always' \
+  'User=root' \
+  '' \
+  '[Install]' \
+  'WantedBy=multi-user.target' \
+  > /etc/systemd/system/webapp.service
+
+RUN systemctl enable webapp
+
+# FAULT INJECTION: Corrupt /etc/hosts so 'localhost' maps to 100.100.100.100
+RUN sed -i 's/127\.0\.0\.1\s\+localhost/100.100.100.100 localhost/' /etc/hosts || echo "100.100.100.100 localhost" >> /etc/hosts

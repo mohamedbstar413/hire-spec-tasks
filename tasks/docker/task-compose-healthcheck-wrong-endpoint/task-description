@@ -1,0 +1,13 @@
+Troubleshoot and fix a Docker Compose service health check failure caused by an incorrect health check endpoint.
+
+Requirements:
+- Located in `/app`, you will find `app.py`, `Dockerfile`, and `docker-compose.yml`.
+- Start the Compose services (`docker compose up -d` or `docker-compose up -d`).
+- Inspect the service status using `docker compose ps` (or `docker ps`). Notice the container `web_api_service` is marked as `unhealthy`.
+- Diagnose why the health check is failing:
+  - Inspect application endpoints in `app.py`.
+  - Test health endpoints manually (e.g. `curl http://localhost:5000/health` vs `curl http://localhost:5000/healthz`).
+  - Notice `docker-compose.yml` polls `/healthz` (which returns HTTP 404), while the actual health endpoint is `/health`.
+- Update `/app/docker-compose.yml` to change the health check test command to target `http://localhost:5000/health`.
+- Restart the service (`docker compose up -d`).
+- Verify `docker compose ps` shows `web_api_service` status as `healthy` (or `Up (healthy)`).

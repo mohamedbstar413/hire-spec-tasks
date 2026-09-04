@@ -1,0 +1,55 @@
+FROM bstar999/docker:with-bash
+
+# Install diagnostic utilities
+RUN apt-get update && apt-get install -y \
+    curl \
+    git \
+    sudo \
+    vim \
+    nano \
+    procps \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*
+
+# Create application directory /app
+RUN mkdir -p /app
+
+# Create Python application with SIGTERM signal handling
+RUN cat << 'EOF' > /app/app.py
+import signal, sys, time
+
+def shutdown(signum, frame):
+    print("Received SIGTERM. Shutting down gracefully...", flush=True)
+    sys.exit(0)
+
+signal.signal(signal.SIGTERM, shutdown)
+signal.signal(signal.SIGINT, shutdown)
+
+print("Application started and listening for signals...", flush=True)
+while True:
+    time.sleep(1)
+EOF
+
+# Create faulty startup script (does not use exec)
+RUN cat << 'EOF' > /app/start.sh
+#!/bin/bash
+# FAULT: Running python without 'exec' means bash remains PID 1 and drops SIGTERM signals.
+# When 'docker stop' is run, the container hangs until Docker issues a forced SIGKILL (10s timeout).
+python3 /app/app.py
+EOF
+RUN chmod +x /app/start.sh
+
+# Create initial Dockerfile
+RUN cat << 'EOF' > /app/Dockerfile
+FROM python:3.9-slim
+
+WORKDIR /app
+COPY app.py .
+COPY start.sh .
+RUN chmod +x start.sh
+
+CMD ["/app/start.sh"]
+EOF
+
+USER root
+WORKDIR /app

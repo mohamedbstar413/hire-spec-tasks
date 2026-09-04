@@ -1,0 +1,18 @@
+Troubleshoot and fix an oversized Docker build context issue caused by a missing `.dockerignore` file.
+
+Requirements:
+- Located in `/app`, you will find `app.py`, `Dockerfile`, and large directories (`build_cache/`, `node_modules/`, `.git/`).
+- Notice that building the image (`docker build -t myapp:latest /app`) sends a huge build context (over 150 MB) to the Docker daemon.
+- Diagnose why the build context is so large:
+  - Check if a `.dockerignore` file exists in `/app` (`ls -la /app`).
+  - Estimate directory sizes using `du -sh /app/*`.
+- Create `/app/.dockerignore` and configure it to exclude unnecessary build artifacts and dependencies:
+  ```text
+  .git
+  node_modules
+  build_cache
+  *.bin
+  *.log
+  ```
+- Rebuild the image (`docker build -t myapp:latest /app`).
+- Verify that the build context sent to the Docker daemon is small, and `/app/.dockerignore` excludes large binary files from the built image.

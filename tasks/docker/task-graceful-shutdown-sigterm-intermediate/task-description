@@ -1,0 +1,16 @@
+Troubleshoot and fix a Docker container shutdown issue where `docker stop` hangs for 10 seconds before being forcibly killed by SIGKILL.
+
+Requirements:
+- Located in `/app`, you will find `app.py`, `start.sh`, and `Dockerfile`.
+- Build the initial image (`docker build -t myapp-shutdown:latest /app`) and run a container (`docker run -d --name test_app myapp-shutdown:latest`).
+- Attempt to stop the container using `docker stop test_app`. Notice that the command hangs for 10 seconds and the container exits with code 137 (`SIGKILL`), indicating it failed to shut down gracefully.
+- Diagnose why `SIGTERM` is not reaching `app.py`:
+  - Inspect `docker top test_app` and process execution.
+  - Notice `/bin/bash /app/start.sh` is running as PID 1, and `bash` does not forward signals to child processes when executed without `exec`.
+- Fix the issue so that `SIGTERM` is properly handled and passed:
+  - Option A: Update `/app/start.sh` to use `exec python3 /app/app.py` so the Python process replaces `bash` as PID 1.
+  - Option B: Use `trap` in `start.sh` to forward signals.
+  - Option C: Update `/app/Dockerfile` to execute `CMD ["python3", "app.py"]` directly.
+- Rebuild the image (`docker build -t myapp-shutdown:latest /app`) and test stopping the container (`docker stop test_app`).
+- Verify that `docker stop` completes immediately (under 3 seconds) with exit status 0, and `docker logs test_app` displays:
+  `Received SIGTERM. Shutting down gracefully...`

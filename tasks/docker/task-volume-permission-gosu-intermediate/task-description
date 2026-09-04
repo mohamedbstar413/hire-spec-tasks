@@ -1,0 +1,18 @@
+Troubleshoot and fix a Docker volume permission denied failure using an entrypoint script with `gosu`.
+
+Requirements:
+- Located in `/app`, you will find `app.py` and `Dockerfile`.
+- Build the initial image (`docker build -t myapp:latest /app`).
+- Run a container mounting host directory `/tmp/host_data` to `/app/data`:
+  - `docker run -d -v /tmp/host_data:/app/data --name app_container myapp:latest`
+- Observe `docker logs app_container`. The app crashes with:
+  `FATAL: [Errno 13] Permission denied: '/app/data/app.log'`
+- This occurs because host volumes mounted into `/app/data` are owned by `root`, while the app runs as unprivileged user `appuser` (UID 1001).
+- Solve the permission issue using an entrypoint script:
+  1. Create `/app/entrypoint.sh` (or `/usr/local/bin/entrypoint.sh`) that starts as `root`.
+  2. Inside `entrypoint.sh`, fix directory permissions/ownership on `/app/data` (e.g., `chown -R appuser:appuser /app/data`).
+  3. Use `exec gosu appuser "$@"` to drop privileges from `root` to `appuser` and execute the application command.
+  4. Update `/app/Dockerfile` to copy `entrypoint.sh`, make it executable (`chmod +x`), and set `ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]`.
+- Rebuild the image (`docker build -t myapp:latest /app`) and run the container with the mounted volume (`docker run -d -v /tmp/host_data:/app/data --name app_container myapp:latest`).
+- Verify `docker logs app_container` displays:
+  `SUCCESS: Data written to volume successfully!`

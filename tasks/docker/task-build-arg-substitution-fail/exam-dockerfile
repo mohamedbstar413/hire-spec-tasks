@@ -1,0 +1,59 @@
+FROM bstar999/docker:with-bash
+
+# Install diagnostic utilities & python3
+RUN apt-get update && apt-get install -y \
+    python3 \
+    curl \
+    git \
+    sudo \
+    vim \
+    nano \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*
+
+# Create application directory
+RUN mkdir -p /app
+
+# Create Python application in /app/app.py
+RUN cat << 'EOF' > /app/app.py
+import sys, time
+
+env_file = "/app/env.txt"
+print(f"Reading build environment from {env_file}...", flush=True)
+
+try:
+    with open(env_file, "r") as f:
+        content = f.read().strip()
+    
+    print(f"Read environment value: '{content}'", flush=True)
+
+    if content == "$APP_ENV" or content == "${APP_ENV}" or content == "":
+        print("FATAL: APP_ENV build arg was NOT substituted! Received literal variable name or empty string.", file=sys.stderr, flush=True)
+        sys.exit(1)
+    elif content == "production":
+        print("SUCCESS: APP_ENV build arg substituted correctly (value: production)!", flush=True)
+    else:
+        print(f"SUCCESS: APP_ENV build arg substituted with value '{content}'!", flush=True)
+except Exception as e:
+    print(f"FATAL ERROR: {e}", file=sys.stderr, flush=True)
+    sys.exit(1)
+
+while True:
+    time.sleep(3600)
+EOF
+
+# Create initial faulty Dockerfile in /app/Dockerfile
+RUN cat << 'EOF' > /app/Dockerfile
+FROM python:3.9-slim
+
+WORKDIR /app
+COPY app.py .
+
+# FAULT: Missing 'ARG APP_ENV' declaration and using single quotes preventing shell expansion
+RUN echo '$APP_ENV' > /app/env.txt
+
+CMD ["python3", "app.py"]
+EOF
+
+USER root
+WORKDIR /app

@@ -1,0 +1,50 @@
+FROM bstar999/docker:with-bash
+
+# Install diagnostic utilities & python3
+RUN apt-get update && apt-get install -y \
+    python3 \
+    curl \
+    git \
+    sudo \
+    vim \
+    nano \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*
+
+# Enable BuildKit by default in environment
+ENV DOCKER_BUILDKIT=1
+
+# Create application directory
+RUN mkdir -p /app
+
+# Create Python application in /app/app.py
+RUN cat << 'EOF' > /app/app.py
+import time
+
+print("Application started securely!", flush=True)
+while True:
+    time.sleep(3600)
+EOF
+
+# Create secret file in /app/secret.txt
+RUN cat << 'EOF' > /app/secret.txt
+super-secret-token-998877
+EOF
+
+# Create initial faulty Dockerfile leaking secret via ARG
+RUN cat << 'EOF' > /app/Dockerfile
+FROM python:3.9-slim
+
+# FAULT: Secret passed via ARG leaks into docker history and image metadata
+ARG API_KEY
+
+WORKDIR /app
+COPY app.py .
+
+RUN echo "Building app using secret $API_KEY" > /app/build.log
+
+CMD ["python3", "app.py"]
+EOF
+
+USER root
+WORKDIR /app

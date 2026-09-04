@@ -1,0 +1,15 @@
+Troubleshoot and fix secret leaking in Docker image history by migrating from `ARG` to BuildKit Secret Mounts.
+
+Requirements:
+- Located in `/app`, you will find `app.py`, `secret.txt` (containing `super-secret-token-998877`), and `Dockerfile`.
+- Currently, building the image with `docker build --build-arg API_KEY="super-secret-token-998877" -t myapp-secret:latest /app` leaks the secret token into image history:
+  - Running `docker history myapp-secret:latest` shows `ARG API_KEY=super-secret-token-998877`.
+  - Running `docker inspect myapp-secret:latest` reveals the sensitive value.
+- Refactor `/app/Dockerfile` to use Docker BuildKit Secret Mounts:
+  - Use `RUN --mount=type=secret,id=api_key ...` to access the secret securely during build without baking it into image layers or history metadata.
+- Build the image using BuildKit and secret mount:
+  - `DOCKER_BUILDKIT=1 docker build --secret id=api_key,src=/app/secret.txt -t myapp-secret:latest /app`
+- Verify that:
+  1. `docker history myapp-secret:latest` does NOT contain `super-secret-token-998877`.
+  2. `docker inspect myapp-secret:latest` does NOT contain `super-secret-token-998877`.
+  3. Running `docker run -d --name secret_test myapp-secret:latest` executes cleanly.

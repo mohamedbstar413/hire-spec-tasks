@@ -1,0 +1,69 @@
+FROM bstar999/docker:with-bash
+
+# Install diagnostic utilities, ping, iptables, netcat, and docker compose
+RUN apt-get update && apt-get install -y \
+    python3 \
+    curl \
+    git \
+    sudo \
+    vim \
+    nano \
+    iputils-ping \
+    iptables \
+    netcat-openbsd \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*
+
+# Create application directory
+RUN mkdir -p /app
+
+# Create Python HTTP web server
+RUN cat << 'EOF' > /app/app.py
+from http.server import HTTPServer, BaseHTTPRequestHandler
+
+class SimpleHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.send_header('Content-type', 'text/plain')
+        self.end_headers()
+        self.wfile.write(b"OK - Service Running\n")
+
+if __name__ == '__main__':
+    server = HTTPServer(('0.0.0.0', 8080), SimpleHandler)
+    print("Serving on 0.0.0.0:8080...")
+    server.serve_forever()
+EOF
+
+# Create Dockerfile
+RUN cat << 'EOF' > /app/Dockerfile
+FROM python:3.9-slim
+WORKDIR /app
+COPY app.py .
+EXPOSE 8080
+CMD ["python3", "app.py"]
+EOF
+
+# Create docker-compose.yml
+RUN cat << 'EOF' > /app/docker-compose.yml
+services:
+  ping_service:
+    build: .
+    container_name: web_ping_container
+    ports:
+      - "8080:8080"
+EOF
+
+# Pre-seed startup script to inject iptables firewall rule blocking ICMP packets
+RUN cat << 'EOF' > /app/setup_firewall.sh
+#!/bin/bash
+# FAULT: Add iptables firewall rule blocking ICMP ping traffic to containers
+iptables -C INPUT -p icmp -j DROP 2>/dev/null || iptables -A INPUT -p icmp -j DROP 2>/dev/null || true
+iptables -C FORWARD -p icmp -j DROP 2>/dev/null || iptables -A FORWARD -p icmp -j DROP 2>/dev/null || true
+EOF
+RUN chmod +x /app/setup_firewall.sh
+
+# Ensure setup_firewall.sh runs on container bash session start
+RUN echo '(/app/setup_firewall.sh >/dev/null 2>&1 &)' >> /root/.bashrc
+
+USER root
+WORKDIR /app

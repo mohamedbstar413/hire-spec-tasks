@@ -1,0 +1,18 @@
+Troubleshoot and fix a Dockerfile build argument substitution failure where `--build-arg APP_ENV=production` is not expanded.
+
+Requirements:
+- Located in `/app`, you will find `app.py` and `Dockerfile`.
+- Build the initial image passing `--build-arg APP_ENV=production`:
+  - `docker build --build-arg APP_ENV=production -t myapp-env:latest /app`
+- Run a container (`docker run myapp-env:latest`).
+- Observe that the container crashes with:
+  `FATAL: APP_ENV build arg was NOT substituted! Received literal variable name or empty string.`
+- Diagnose why `APP_ENV` was not substituted during `docker build`:
+  - Check `/app/Dockerfile` for missing `ARG APP_ENV` declaration.
+  - Check if single quotes (`'$APP_ENV'`) in the `RUN` command prevent shell expansion.
+- Fix `/app/Dockerfile`:
+  - Declare `ARG APP_ENV` before usage.
+  - Update `RUN` command to allow variable expansion (e.g. `RUN echo "${APP_ENV}" > /app/env.txt`).
+- Rebuild the image (`docker build --build-arg APP_ENV=production -t myapp-env:latest /app`) and run a container (`docker run -d --name env_app myapp-env:latest`).
+- Verify `docker logs env_app` displays:
+  `SUCCESS: APP_ENV build arg substituted correctly (value: production)!`

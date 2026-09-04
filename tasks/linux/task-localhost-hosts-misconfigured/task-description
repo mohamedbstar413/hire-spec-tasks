@@ -1,0 +1,8 @@
+Troubleshoot and fix a local hostname resolution failure where `curl http://localhost:3000` fails despite the service actively running.
+
+Requirements:
+- A local web application service (`webapp.service`) is running on TCP port 3000.
+- Executing `curl http://127.0.0.1:3000` succeeds, but `curl http://localhost:3000` fails with a connection error (`curl: (7) Failed to connect`).
+- Diagnose why requests to `localhost` are failing (check hostname resolution in `/etc/hosts` or with `ping localhost`).
+- Fix `/etc/hosts` so that `localhost` correctly resolves to `127.0.0.1`.
+- Verify that `curl http://localhost:3000` returns `OK - WebApp Healthy` with HTTP status code 200.

@@ -1,0 +1,60 @@
+FROM bstar999/docker:with-bash
+
+# Install diagnostic utilities & docker compose
+RUN apt-get update && apt-get install -y \
+    python3 \
+    curl \
+    git \
+    sudo \
+    vim \
+    nano \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*
+
+# Create application directory
+RUN mkdir -p /app
+
+# Create Python application in /app/app.py
+RUN cat << 'EOF' > /app/app.py
+import time, sys
+
+print("API Service initialized successfully.", flush=True)
+print("Processing background events...", flush=True)
+
+count = 1
+while True:
+    print(f"[LOG EVENT {count}] Active and serving requests...", flush=True)
+    count += 1
+    time.sleep(2)
+EOF
+
+# Create startup script with FAULT (redirecting logs to /var/log/app.log)
+RUN cat << 'EOF' > /app/start.sh
+#!/bin/bash
+# FAULT: Output is redirected to a file instead of stdout/stderr.
+# Docker logs will be empty because stdout/stderr are muted.
+python3 /app/app.py > /var/log/app.log 2>&1
+EOF
+RUN chmod +x /app/start.sh
+
+# Create Dockerfile
+RUN cat << 'EOF' > /app/Dockerfile
+FROM python:3.9-slim
+WORKDIR /app
+COPY app.py .
+COPY start.sh .
+RUN chmod +x start.sh
+CMD ["/app/start.sh"]
+EOF
+
+# Create docker-compose.yml
+RUN cat << 'EOF' > /app/docker-compose.yml
+services:
+  app_service:
+    build: .
+    container_name: app_logger_service
+    restart: always
+EOF
+
+USER root
+WORKDIR /app

@@ -1,0 +1,8 @@
+Troubleshoot and fix a hostname resolution failure where `curl http://localhost:3000` fails.
+
+Requirements:
+- Located in `/app`, you will find `app.py` and `Dockerfile`.
+- Executing `curl http://127.0.0.1:3000` succeeds, but `curl http://localhost:3000` fails with `curl: (7) Failed to connect to localhost port 3000: Connection refused`.
+- Diagnose why requests to `localhost` are failing (check hostname resolution in `/etc/hosts` or `ping localhost`).
+- Fix `/etc/hosts` so that `localhost` correctly resolves to `127.0.0.1`.
+- Verify that `curl http://localhost:3000` returns `OK - WebApp Healthy` with HTTP status code 200.

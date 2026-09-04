@@ -1,0 +1,61 @@
+FROM bstar999/docker:with-bash
+
+# Install diagnostic utilities, ping, netcat, and docker compose
+RUN apt-get update && apt-get install -y \
+    python3 \
+    curl \
+    git \
+    sudo \
+    vim \
+    nano \
+    iputils-ping \
+    netcat-openbsd \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*
+
+# Create application directory
+RUN mkdir -p /app
+
+# Create Python HTTP web server
+RUN cat << 'EOF' > /app/app.py
+from http.server import HTTPServer, BaseHTTPRequestHandler
+
+class SimpleHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.send_header('Content-type', 'text/plain')
+        self.end_headers()
+        self.wfile.write(b"OK - Service Accessible\n")
+
+if __name__ == '__main__':
+    server = HTTPServer(('0.0.0.0', 8080), SimpleHandler)
+    print("Serving on 0.0.0.0:8080...")
+    server.serve_forever()
+EOF
+
+# Create Dockerfile
+RUN cat << 'EOF' > /app/Dockerfile
+FROM python:3.9-slim
+WORKDIR /app
+COPY app.py .
+EXPOSE 8080
+CMD ["python3", "app.py"]
+EOF
+
+# Create docker-compose.yml with FAULT (internal: true under network)
+RUN cat << 'EOF' > /app/docker-compose.yml
+services:
+  web_app:
+    build: .
+    container_name: unreachable_web_app
+    networks:
+      - isolated_net
+
+networks:
+  isolated_net:
+    driver: bridge
+    internal: true # FAULT: Prevents external/host network routing to the container
+EOF
+
+USER root
+WORKDIR /app

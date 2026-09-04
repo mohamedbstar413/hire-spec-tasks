@@ -1,0 +1,12 @@
+Troubleshoot and fix a firewall rule blocking ICMP ping traffic to a Docker container.
+
+Requirements:
+- Located in `/app`, you will find `app.py`, `Dockerfile`, and `docker-compose.yml`.
+- Start the Compose services (`docker compose up -d` or `docker-compose up -d`).
+- Inspect the container's IP address (`docker inspect web_ping_container --format='{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}'`).
+- Attempting to ping the container (`ping -c 3 <container_ip>`) fails with 100% packet loss / packet filtered errors.
+- Diagnose why ICMP traffic is blocked:
+  - Inspect system firewall / `iptables` rules (`sudo iptables -L -n -v` or `sudo iptables -S`).
+  - Notice an `iptables` rule dropping ICMP packets (`-A INPUT -p icmp -j DROP` or `-A FORWARD -p icmp -j DROP`).
+- Remove / flush the restrictive `iptables` rule blocking ICMP traffic (e.g. `iptables -D INPUT -p icmp -j DROP` or `iptables -D FORWARD -p icmp -j DROP`).
+- Verify that `ping -c 3 <container_ip>` succeeds with 0% packet loss.

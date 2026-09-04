@@ -1,0 +1,11 @@
+Troubleshoot and resolve an image removal failure where Docker refuses to delete `legacy-app:v1`.
+
+Requirements:
+- You are tasked with cleaning up unused images to free disk space.
+- Attempting to remove the image `legacy-app:v1` (`docker rmi legacy-app:v1`) fails with a conflict error:
+  `unable to remove repository reference "legacy-app:v1" ... container is using its referenced image`
+- Notice that `docker ps` shows no running containers.
+- Diagnose why the image is still locked (inspect stopped containers with `docker ps -a`).
+- Remove the stopped container(s) blocking the image deletion (`docker rm stopped_legacy_app`).
+- Remove the image `legacy-app:v1` (`docker rmi legacy-app:v1`).
+- Verify that `legacy-app:v1` is completely removed and no longer appears in `docker images`.

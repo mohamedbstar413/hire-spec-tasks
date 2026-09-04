@@ -1,0 +1,15 @@
+Troubleshoot and fix a Docker Compose logging issue where `docker compose logs` shows no output.
+
+Requirements:
+- Located in `/app`, you will find `app.py`, `start.sh`, `Dockerfile`, and `docker-compose.yml`.
+- Start the Compose services (`docker compose up -d` or `docker-compose up -d`).
+- Inspect the logs using `docker compose logs app_service` (or `docker logs app_logger_service`).
+- Notice that the logs are completely empty even though `docker compose ps` shows the container is actively running.
+- Diagnose why `docker compose logs` is empty:
+  - Inspect `/app/start.sh` or `/app/Dockerfile`.
+  - Notice that application output is being redirected to `/var/log/app.log` (`> /var/log/app.log 2>&1`) instead of standard output (`stdout`) / standard error (`stderr`).
+- Fix `/app/start.sh` (or `Dockerfile`) so that the application logs directly to `stdout`/`stderr` (e.g. `exec python3 /app/app.py`).
+- Rebuild and restart the services (`docker compose up -d --build`).
+- Verify `docker compose logs app_service` displays:
+  `API Service initialized successfully.`
+  `[LOG EVENT ...] Active and serving requests...`

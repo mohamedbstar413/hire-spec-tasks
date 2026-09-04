@@ -1,0 +1,7 @@
+Troubleshoot and fix a network connectivity failure where outgoing HTTP requests to external domain names fail.
+
+Requirements:
+- Executing `/opt/scripts/check_connectivity.sh` or `curl https://google.com` fails with a network connection error (`curl: (6) Could not resolve host`).
+- Diagnose why outgoing network requests to domain names are failing.
+- Resolve the underlying configuration issue so that domain name resolution functions properly.
+- Verify that `curl https://google.com` and `/opt/scripts/check_connectivity.sh` execute successfully and return `SUCCESS: Connection established successfully!`.

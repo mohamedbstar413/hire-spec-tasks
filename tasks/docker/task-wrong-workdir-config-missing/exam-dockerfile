@@ -1,0 +1,60 @@
+FROM bstar999/docker:with-bash
+
+# Install diagnostic utilities
+RUN apt-get update && apt-get install -y \
+    curl \
+    git \
+    sudo \
+    vim \
+    nano \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*
+
+# Create application directory /app
+RUN mkdir -p /app
+
+# Create JSON configuration file in /app/config.json
+RUN cat << 'EOF' > /app/config.json
+{
+  "environment": "production",
+  "db_host": "localhost",
+  "port": 8080
+}
+EOF
+
+# Create Python application in /app/app.py using relative file access
+RUN cat << 'EOF' > /app/app.py
+import json, os, sys, time
+
+print(f"Current Working Directory (pwd): {os.getcwd()}", flush=True)
+print("Loading configuration file 'config.json'...", flush=True)
+
+try:
+    with open("config.json", "r") as f:
+        config = json.load(f)
+    print(f"SUCCESS: Loaded config successfully! DB Host: {config.get('db_host')}", flush=True)
+except FileNotFoundError as e:
+    print(f"FATAL ERROR: Could not find configuration file! {e}", file=sys.stderr, flush=True)
+    sys.exit(1)
+
+while True:
+    time.sleep(3600)
+EOF
+
+# Create initial faulty Dockerfile in /app/Dockerfile
+RUN cat << 'EOF' > /app/Dockerfile
+FROM python:3.9-slim
+
+RUN mkdir -p /app
+COPY config.json /app/
+COPY app.py /app/
+
+# FAULT: WORKDIR is set to / (wrong working directory).
+# When app.py tries to open relative path 'config.json', it searches in / instead of /app/ and crashes.
+WORKDIR /
+
+CMD ["python3", "/app/app.py"]
+EOF
+
+USER root
+WORKDIR /app

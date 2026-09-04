@@ -1,0 +1,55 @@
+FROM bstar999/docker:with-bash
+
+# Install diagnostic utilities and gosu
+RUN apt-get update && apt-get install -y \
+    curl \
+    git \
+    sudo \
+    vim \
+    nano \
+    gosu \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*
+
+# Create application directory
+RUN mkdir -p /app /tmp/host_data && chmod 755 /tmp/host_data
+
+# Create Python application in /app/app.py
+RUN cat << 'EOF' > /app/app.py
+import os, sys, time
+
+data_file = "/app/data/app.log"
+print(f"Attempting to write data to {data_file}...", flush=True)
+
+try:
+    with open(data_file, "a") as f:
+        f.write(f"Log entry created at {time.ctime()}\n")
+    print("SUCCESS: Data written to volume successfully!", flush=True)
+except Exception as e:
+    print(f"FATAL: {e}", file=sys.stderr, flush=True)
+    sys.exit(1)
+
+while True:
+    time.sleep(3600)
+EOF
+
+# Create initial faulty Dockerfile in /app/Dockerfile
+RUN cat << 'EOF' > /app/Dockerfile
+FROM python:3.9-slim
+
+RUN apt-get update && apt-get install -y gosu && rm -rf /var/lib/apt/lists/*
+RUN useradd -u 1001 -m appuser
+
+WORKDIR /app
+COPY app.py .
+RUN mkdir -p /app/data
+
+# FAULT: Application runs directly as unprivileged appuser (UID 1001)
+# When host volume is mounted to /app/data, it is owned by root, causing Permission denied.
+USER appuser
+
+CMD ["python3", "app.py"]
+EOF
+
+USER root
+WORKDIR /app
