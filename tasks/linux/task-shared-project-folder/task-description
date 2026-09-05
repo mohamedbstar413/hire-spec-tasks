@@ -1,0 +1,18 @@
+A small engineering team needs a shared working directory with proper permission inheritance for team collaboration.
+
+Task Requirements:
+1. Create the project root directory at `/home/shared/project-alpha`.
+2. Inside `/home/shared/project-alpha`, create three subdirectories:
+   - `src`
+   - `docs`
+   - `output`
+3. Set group ownership of `/home/shared/project-alpha` and its subdirectories to `alpha-team`.
+4. Configure permissions so that:
+   - The directory owner has full access (`rwx`).
+   - Members of the group `alpha-team` have full read/write access (`rwx`).
+   - Other users have no access (`---` / 0 permissions).
+5. Configure permission inheritance (SGID bit `g+s` and/or default ACLs) on `/home/shared/project-alpha` and its subdirectories so that any newly created files or subdirectories automatically inherit group write access (`rw-` / `rwx` for `alpha-team`).
+6. Create a sample file in each subdirectory:
+   - `/home/shared/project-alpha/src/main.c`
+   - `/home/shared/project-alpha/docs/README.md`
+   - `/home/shared/project-alpha/output/build.log`
