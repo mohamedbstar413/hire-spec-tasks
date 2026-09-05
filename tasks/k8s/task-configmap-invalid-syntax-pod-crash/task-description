@@ -1,0 +1,98 @@
+# Kubernetes Lab: Debugging Invalid ConfigMap Syntax (Pod CrashLoopBackOff)
+
+## Background Scenario
+A web application deployment (`web-app`) is repeatedly failing on startup with `CrashLoopBackOff`. The application container mounts Nginx configuration from a ConfigMap named `app-config` into `/etc/nginx/conf.d/default.conf`.
+
+During startup, Nginx validates its configuration files. Because `app-config` contains an invalid directive syntax (`invalid_directive_broken_syntax`), Nginx encounters an emergency configuration parsing error, prints an error message to stderr, and exits with code 1.
+
+Your objective as a DevOps / Kubernetes Engineer is to inspect the pod logs and ConfigMap specification, fix the syntax error in `app-config`, and ensure `web-app` successfully reaches `1/1 Ready` state.
+
+---
+
+## Symptoms Observed
+- `kubectl get deployment web-app` displays `READY: 0/1`.
+- `kubectl get pods -l app=web-app` displays `STATUS: CrashLoopBackOff`.
+- Pod logs (`kubectl logs -l app=web-app`) display Nginx configuration parsing errors:
+  ```
+  2026/09/05 04:42:00 [emerg] 1#1: unknown directive "invalid_directive_broken_syntax" in /etc/nginx/conf.d/default.conf:8
+  nginx: [emerg] unknown directive "invalid_directive_broken_syntax" in /etc/nginx/conf.d/default.conf:8
+  ```
+
+---
+
+## Task Objectives
+1. Inspect the crashing container logs:
+   ```bash
+   kubectl get pods -l app=web-app
+   kubectl logs -l app=web-app
+   ```
+2. Inspect the mounted ConfigMap data:
+   ```bash
+   kubectl get configmap app-config -o yaml
+   ```
+3. Identify the invalid Nginx directive (`invalid_directive_broken_syntax`).
+4. Update `/app/manifests.yaml` (or edit the ConfigMap directly via `kubectl edit cm app-config`):
+   Remove the invalid directive line so that `default.conf` contains valid syntax:
+   ```nginx
+   server {
+       listen 80;
+       server_name localhost;
+
+       location / {
+           root /usr/share/nginx/html;
+           index index.html;
+       }
+   }
+   ```
+5. Re-apply the manifest (`kubectl apply -f /app/manifests.yaml`) or restart the deployment (`kubectl rollout restart deployment web-app`) so the pod mounts the valid configuration and reaches `1/1 Running` (`READY 1/1`).
+
+---
+
+## Troubleshooting Guide & Common Production Causes for ConfigMap Parsing Failures
+
+### 1. How Mounted ConfigMaps Impact Container Execution
+- **Startup Config Validation**: Modern software (Nginx, Apache, MySQL, Postgres, Prometheus) validates configuration files on startup before spawning daemon worker threads.
+- **Fail-Fast Behavior**: Syntax errors or invalid options cause the process to terminate immediately (`exit 1`), leading to Kubernetes container `CrashLoopBackOff`.
+- **SubPath Mounting Staleness**: When ConfigMaps are mounted using `subPath`, Kubernetes does not automatically update the file in the running container when the ConfigMap is edited. A pod restart/rollout is required.
+
+---
+
+### 2. Diagnostic Steps
+
+1. **Check Container Logs**:
+   ```bash
+   kubectl logs deployment/web-app
+   ```
+
+2. **Inspect ConfigMap YAML**:
+   ```bash
+   kubectl get configmap app-config -o yaml
+   ```
+
+3. **Validate Config Syntax**:
+   Verify syntax formatting (YAML indentation, JSON quotes/brackets, Nginx semicolons/braces).
+
+---
+
+### 3. Top Production Causes for ConfigMap Syntax Failures
+
+| Cause Category | Typical Error Log | Common Root Cause & Solution |
+| :--- | :--- | :--- |
+| **Invalid Syntax / Directive** | `unknown directive "..."` | Config file injected via ConfigMap contains typos or unsupported directives. Fix config file text. |
+| **YAML Indentation Typo** | `yaml: line X: did not find expected key` | Malformed multi-line string block (`|` vs `>`) or tab characters in ConfigMap data. Fix YAML spacing. |
+| **JSON Parse Error** | `unexpected token in JSON at position X` | Unescaped double quotes or trailing commas in JSON config files. Format with `jq`. |
+| **SubPath Staleness** | Config updated in CM but Pod still crashing | Pod mounted ConfigMap with `subPath`. Trigger rollout restart: `kubectl rollout restart deployment <name>`. |
+
+---
+
+## Verification & Expected Outcome
+Run `verify.sh` or inspect deployment:
+```bash
+kubectl get deployment web-app
+```
+Expected Output:
+```
+NAME      READY   UP-TO-DATE   AVAILABLE   AGE
+web-app   1/1     1            1           5m
+```
+`verify.sh` exits with return code `0`.

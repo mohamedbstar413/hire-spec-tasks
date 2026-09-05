@@ -1,0 +1,102 @@
+# Kubernetes Lab: Debugging Combined Policy Blocks (NetworkPolicy + PodSecurity + ResourceQuota)
+
+## Background Scenario
+Security governance teams established a hardened namespace `secure-app-ns` enforcing three distinct policy layers:
+1. **Pod Security Standards (PSA)**: Namespace labeled with `pod-security.kubernetes.io/enforce: restricted`.
+2. **ResourceQuota**: `compute-quota` requiring explicit container CPU/Memory requests and limits.
+3. **NetworkPolicy**: `secure-netpol` restricting ingress and egress traffic for pods labeled `app: secure-app`.
+
+A new microservice deployment (`secure-app`) was applied to `secure-app-ns`, but it fails across all three policy enforcement layers:
+- The ReplicaSet controller cannot create pods because the container spec omits `securityContext` parameters required by the `restricted` PSA profile (`allowPrivilegeEscalation: false`, `runAsNonRoot: true`, `capabilities: drop: ["ALL"]`, `seccompProfile: { type: RuntimeDefault }`).
+- The admission controller rejects pod creation because `resources.requests` and `resources.limits` are missing.
+- Even if pods start, `secure-netpol` specifies `egress: []`, blocking all outgoing traffic (including DNS lookups and backend API connectivity).
+
+Your objective as a Senior Kubernetes Security / DevOps Engineer is to systematically diagnose and resolve all policy conflicts in `/app/manifests.yaml`, bringing `secure-app` to `1/1 Ready` state while preserving cluster governance compliance.
+
+---
+
+## Symptoms Observed
+- `kubectl get deployment secure-app -n secure-app-ns` displays `READY: 0/1`.
+- `kubectl describe rs -n secure-app-ns` displays multiple admission errors:
+  - PSA violation: `violates PodSecurity "restricted:latest": allowPrivilegeEscalation != false, runAsNonRoot != true, unrestricted capabilities`.
+  - ResourceQuota violation: `must specify requests.cpu; requests.memory; limits.cpu; limits.memory`.
+- NetworkPolicy `secure-netpol` isolates all outgoing traffic from `secure-app`.
+
+---
+
+## Task Objectives
+1. Inspect namespace governance rules:
+   ```bash
+   kubectl get ns secure-app-ns -o yaml
+   kubectl describe resourcequota compute-quota -n secure-app-ns
+   kubectl describe netpol secure-netpol -n secure-app-ns
+   ```
+2. Inspect ReplicaSet events in `secure-app-ns`:
+   ```bash
+   kubectl describe rs -n secure-app-ns
+   ```
+3. Update `/app/manifests.yaml` (or edit deployment & networkpolicy):
+   - Add PSA-compliant `securityContext` to container spec:
+     ```yaml
+     securityContext:
+       allowPrivilegeEscalation: false
+       runAsNonRoot: true
+       runAsUser: 1000
+       capabilities:
+         drop:
+         - ALL
+       seccompProfile:
+         type: RuntimeDefault
+     ```
+   - Add explicit container `resources`:
+     ```yaml
+     resources:
+       requests:
+         cpu: "100m"
+         memory: "128Mi"
+       limits:
+         cpu: "250m"
+         memory: "256Mi"
+     ```
+   - Update `secure-netpol` egress rules to permit outgoing traffic (DNS on port 53 / external CIDRs).
+4. Re-apply the manifest (`kubectl apply -f /app/manifests.yaml`) and verify that `secure-app` reaches `1/1 Running` (`READY 1/1`).
+
+---
+
+## Troubleshooting Guide & Common Production Causes for Multi-Layer Policy Failures
+
+### 1. Intersecting Governance Layers in Hardened Namespaces
+- **Pod Security Admission (PSA)**: Built-in k8s admission controller evaluating pods against `privileged`, `baseline`, and `restricted` profiles. `restricted` requires explicit opt-out of root user and Linux capabilities.
+- **ResourceQuota**: Rejects any pod lacking explicit `requests` and `limits` unless a default `LimitRange` exists.
+- **NetworkPolicy Default Deny**: Setting `policyTypes: [Egress]` with `egress: []` acts as an absolute egress firewall block.
+
+---
+
+### 2. Diagnostic Sequence
+1. Check PSA admission rejection in `kubectl describe rs`.
+2. Check quota rejection in `kubectl describe resourcequota`.
+3. Check network policy connectivity using `kubectl describe netpol`.
+
+---
+
+### 3. Top Production Causes for Multi-Layer Governance Failures
+
+| Governance Layer | Typical Error | Root Cause & Remediation |
+| :--- | :--- | :--- |
+| **PodSecurity (PSA)** | `violates PodSecurity "restricted"` | Pod spec omits `runAsNonRoot: true`, `allowPrivilegeEscalation: false`, or `capabilities.drop: ["ALL"]`. Update `securityContext`. |
+| **ResourceQuota** | `failed quota: compute-quota: must specify requests` | Container spec omits `resources.requests` or `resources.limits`. Add explicit resource blocks. |
+| **NetworkPolicy Egress** | Connections time out / DNS lookup failures | `NetworkPolicy` specifies `policyTypes: [Egress]` with empty `egress: []`. Add egress rule for UDP/TCP port 53 (DNS) and app backends. |
+
+---
+
+## Verification & Expected Outcome
+Run `verify.sh` or inspect deployment:
+```bash
+kubectl get deployment secure-app -n secure-app-ns
+```
+Expected Output:
+```
+NAME         READY   UP-TO-DATE   AVAILABLE   AGE
+secure-app   1/1     1            1           5m
+```
+`verify.sh` exits with return code `0`.

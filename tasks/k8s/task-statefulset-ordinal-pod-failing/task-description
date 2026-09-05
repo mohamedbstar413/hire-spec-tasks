@@ -1,0 +1,95 @@
+# Kubernetes Lab: Debugging StatefulSet Ordinal Pod Crash
+
+## Background Scenario
+A clustered application is deployed as a 3-replica StatefulSet named `app` (`app-0`, `app-1`, `app-2`). While ordinal pods `app-0` and `app-1` are healthy and serving traffic in `1/1 Running` state, ordinal pod `app-2` keeps failing during startup and is stuck in `CrashLoopBackOff`.
+
+Your objective as a DevOps / Kubernetes Engineer is to inspect the logs of ordinal pod `app-2`, identify why `app-2` fails to initialize, update the cluster configuration, and ensure all **3 ordinal pods** reach `1/1 Running` and `READY 3/3`.
+
+---
+
+## Symptoms Observed
+- `kubectl get pods -l app=stateful-app` displays:
+  ```
+  NAME    READY   STATUS             RESTARTS   AGE
+  app-0   1/1     Running            0          5m
+  app-1   1/1     Running            0          5m
+  app-2   0/1     CrashLoopBackOff   4          2m
+  ```
+- Running `kubectl logs app-2` displays:
+  `FATAL ERROR: Configuration for ordinal pod 'app-2' missing in /etc/config/cluster-nodes.json!`
+
+---
+
+## Task Objectives
+1. Inspect the running pods and retrieve logs specifically for `app-2`:
+   ```bash
+   kubectl logs app-2
+   ```
+2. Inspect the mounted ConfigMap `cluster-config` containing `/etc/config/cluster-nodes.json`:
+   ```bash
+   kubectl get configmap cluster-config -o yaml
+   ```
+3. Update the ConfigMap (`/app/manifests.yaml` or via `kubectl edit configmap cluster-config`) to add the missing entry for `"app-2"`:
+   ```json
+   "app-2": {
+     "role": "replica",
+     "port": 8080
+   }
+   ```
+4. Verify that `app-2` initializes cleanly and all 3 pods (`app-0`, `app-1`, `app-2`) reach `1/1 Running` and `READY 3/3`.
+
+---
+
+## Troubleshooting Guide & Common Production Causes for Ordinal-Specific Failures
+
+### 1. How StatefulSet Ordinals Work in Kubernetes
+- **Unique Ordinal Identity**: Unlike Deployments where pods are interchangeable, StatefulSet pods receive a fixed ordinal index (`app-0`, `app-1`, `app-2`).
+- **Sequential Lifecycle & Unique Configuration**: Apps running inside StatefulSets often require unique per-ordinal configurations (e.g. primary vs. replica roles, distinct node IDs, separate persistent storage volumes).
+- **Sticky Storage & Identity**: Each ordinal pod binds to its matching `VolumeClaimTemplate` (e.g. `data-app-0`, `data-app-1`, `data-app-2`).
+
+---
+
+### 2. Diagnostic Steps
+
+1. **Check Pod Overview**:
+   ```bash
+   kubectl get pods -l app=stateful-app -o wide
+   ```
+2. **Inspect Crashing Ordinal Pod Logs**:
+   ```bash
+   kubectl logs app-2
+   ```
+3. **Inspect ConfigMap Data**:
+   ```bash
+   kubectl get configmap cluster-config -o jsonpath='{.data.cluster-nodes\.json}'
+   ```
+4. **Edit ConfigMap to Add Ordinal Configuration**:
+   ```bash
+   kubectl edit configmap cluster-config
+   ```
+
+---
+
+### 3. Top Production Causes for Ordinal-Specific StatefulSet Failures
+
+| Cause Category | Typical Symptom | Common Root Cause & Solution |
+| :--- | :--- | :--- |
+| **Missing Ordinal Config Entry** | `KeyError: 'app-N'` / `Config missing` | ConfigMap or cluster membership file was defined for `app-0` and `app-1`, but missing configuration for `app-2` when cluster was scaled up. |
+| **Ordinal PVC Permission Failure** | `Permission Denied` on `app-2` only | PersistentVolume created for ordinal index 2 has incorrect file ownership/permissions (`0700 root:root`) preventing container user from writing. |
+| **Stale PVC Data on Re-created Pod** | App startup fails due to corrupt state | Re-created `app-2` pod mounts old PVC containing corrupted database WAL log or mismatched node ID. |
+| **Local PV Node Binding Issue** | `Pending` / `CrashLoopBackOff` on `app-2` | Pod `app-2` bound to local PV on Node 3, but Node 3 ran out of disk space or local storage mount failed. |
+| **Network Partition / Peer Discovery** | `Connection refused` / `Timeout` | `app-2` cannot connect to primary `app-0` due to firewall rule or DNS resolution failure on headless service. |
+
+---
+
+## Verification & Expected Outcome
+Run `verify.sh` or check cluster status:
+```bash
+kubectl get statefulset app
+```
+Expected Output:
+```
+NAME   READY   AGE
+app    3/3     5m
+```
+All 3 pods (`app-0`, `app-1`, `app-2`) must show `READY 1/1` and status `Running` with `0` active restarts on `app-2`.

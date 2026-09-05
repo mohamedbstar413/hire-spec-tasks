@@ -1,0 +1,81 @@
+# Kubernetes Lab: Debugging Pod Stuck in Terminating State
+
+## Background Scenario
+During a maintenance operation on a database cluster deployed as a StatefulSet (`db-ss`), pod `db-ss-0` was issued a deletion command. However, the pod has been stuck in the `Terminating` state for hours and fails to terminate, preventing the StatefulSet controller from completing lifecycle updates or re-creating a fresh healthy pod instance.
+
+Your objective as a Kubernetes Administrator / SRE is to investigate why pod `db-ss-0` is stuck in `Terminating`, resolve the underlying blocking condition, and ensure all replicas of the `db-ss` StatefulSet reach `1/1 Running` state.
+
+---
+
+## Symptoms Observed
+- `kubectl get pods` displays:
+  ```
+  NAME      READY   STATUS        RESTARTS   AGE
+  db-ss-0   1/1     Terminating   0          2h
+  db-ss-1   1/1     Running       0          2h
+  db-ss-2   1/1     Running       0          2h
+  ```
+- Standard deletion requests (`kubectl delete pod db-ss-0`) hang or report that deletion is already in progress.
+
+---
+
+## Task Objectives
+1. Inspect `db-ss-0` using `kubectl describe pod db-ss-0` or `kubectl get pod db-ss-0 -o yaml`.
+2. Locate the metadata field blocking deletion (`metadata.finalizers`).
+3. Remove the blocking finalizer (`custom.finalizer/cleanup-protection`) from `db-ss-0`.
+4. Verify that the StatefulSet controller successfully recreates `db-ss-0` and all 3 replicas (`db-ss-0`, `db-ss-1`, `db-ss-2`) reach `1/1 Running` and `READY 3/3`.
+
+---
+
+## Troubleshooting Guide & Production Causes for Stuck `Terminating` Pods
+
+### 1. How Deletion Works & Why Pods Get Stuck
+When a Pod is deleted in Kubernetes:
+1. Kubernetes assigns a `deletionTimestamp` to the resource metadata.
+2. If `metadata.finalizers` contains any entry, the Kubernetes API Server **refuses to remove the object** from etcd until all finalizers are stripped by their respective controllers.
+3. If a custom controller is offline, or a finalizer is added erroneously, the Pod remains in `Terminating` indefinitely.
+
+### 2. Diagnostic Steps
+
+1. **Inspect Pod YAML for Finalizers**:
+   ```bash
+   kubectl get pod db-ss-0 -o jsonpath='{.metadata.finalizers}'
+   ```
+2. **View Detailed Pod Event History**:
+   ```bash
+   kubectl describe pod db-ss-0
+   ```
+   *Check if `Deletion Timestamp` is set and look at active finalizers listed under Metadata.*
+
+3. **Remove Blocking Finalizers**:
+   Patch the pod metadata to remove finalizers:
+   ```bash
+   kubectl patch pod db-ss-0 -n default --type=json -p='[{"op": "remove", "path": "/metadata/finalizers"}]'
+   ```
+   *(Or set finalizers to null via merge patch: `kubectl patch pod db-ss-0 -n default -p '{"metadata":{"finalizers":null}}'`)*
+
+---
+
+### 3. Top Production Causes for Pod Stuck in `Terminating` State
+
+| Cause Category | Root Cause Mechanism | Recommended Fix / Recovery Action |
+| :--- | :--- | :--- |
+| **Dangling Finalizers** | Custom controllers or storage finalizers (`kubernetes.io/pv-protection`, custom CRD finalizers) registered on the Pod metadata that are never removed. | Inspect `.metadata.finalizers` and patch the object to strip stale finalizers. |
+| **CSI Volume Unmount Failure** | Node or storage backend connection lost; CSI storage driver cannot unmount persistent volume mount before pod exit. | Force unmount volume on host node, restart CSI node plugin, or patch finalizer. |
+| **Hanging PreStop Lifecycle Hook** | Pod container defined a `preStop` hook script that is sleeping, hanging, or waiting on network response indefinitely. | Terminate hanging process inside container or force-delete pod (`--force --grace-period=0`). |
+| **Unreachable / NotReady Node** | Kubelet on host node crashed or lost control plane network connectivity; control plane waits for node confirmation. | Evict pod from node or issue `kubectl delete pod <pod> --force --grace-period=0`. |
+| **Orphaned Quorum Signal** | Database pod (PostgreSQL/Etcd/Consul) waiting for peer confirmation before shutting down gracefully. | Verify peer connectivity or issue force termination if node is isolated. |
+
+---
+
+## Verification & Expected Outcome
+Run `verify.sh` or inspect the cluster:
+```bash
+kubectl get statefulset db-ss
+```
+Expected Output:
+```
+NAME    READY   AGE
+db-ss   3/3     10m
+```
+All pods (`db-ss-0`, `db-ss-1`, `db-ss-2`) must be `1/1 Running` without any pods stuck in `Terminating`.

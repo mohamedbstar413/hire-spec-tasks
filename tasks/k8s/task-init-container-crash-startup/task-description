@@ -1,0 +1,86 @@
+# Kubernetes Lab: Debugging Init Container Startup Crash
+
+## Background Scenario
+A web application deployment (`web-app`) relies on an `initContainer` named `init-db-check` to verify database connectivity before starting the main application container (`app-container`).
+
+However, after deploying the updated manifest, the pod fails to start and remains stuck in an `Init:CrashLoopBackOff` state. As a result, the main application container never initializes.
+
+Your objective as a DevOps / Kubernetes Engineer is to inspect the init container logs, identify the hostname configuration error, fix the deployment manifest, and ensure the `web-app` pod reaches `1/1 Running` state.
+
+---
+
+## Symptoms Observed
+- `kubectl get pods` displays:
+  ```
+  NAME                       READY   STATUS                  RESTARTS   AGE
+  web-app-69974c8b6b-8x4z2   0/1     Init:CrashLoopBackOff   3          2m
+  ```
+- Running `kubectl logs web-app-69974c8b6b-8x4z2` without specifying container name returns an error indicating multiple containers exist.
+- The main container `app-container` never starts because Kubernetes executes init containers sequentially, requiring an exit code of `0` before starting main application containers.
+
+---
+
+## Task Objectives
+1. Inspect the pod status and retrieve logs specifically from the init container:
+   ```bash
+   kubectl logs <pod-name> -c init-db-check
+   ```
+2. Identify the typo in the target service hostname (`db-servcie` instead of `db-service`).
+3. Update the deployment manifest via `kubectl edit deployment web-app` or by updating `/app/manifests.yaml` and running `kubectl apply -f /app/manifests.yaml`.
+4. Verify that `init-db-check` completes successfully (`Completed`), allowing `app-container` to start up and reach `1/1 Running` state (`READY 1/1`).
+
+---
+
+## Troubleshooting Guide & Common Production Causes for Init Container Failures
+
+### 1. How Init Containers Work in Kubernetes
+- **Sequential Execution**: Init containers run before app containers in a Pod. If a Pod defines multiple init containers, Kubernetes runs them one at a time in order.
+- **Success Requirement**: Each init container must run to completion (`exit 0`) before the next one starts. If an init container fails (`exit 1`), Kubernetes restarts the Pod according to `restartPolicy`, resulting in `Init:CrashLoopBackOff`.
+- **Log Inspection Syntax**: When running `kubectl logs`, you **must** specify `-c <init-container-name>` to view init container output.
+
+---
+
+### 2. Diagnostic Steps
+
+1. **Check Pod Status Overview**:
+   ```bash
+   kubectl get pods -l app=web-app
+   ```
+2. **Inspect Init Container Logs**:
+   ```bash
+   kubectl logs -l app=web-app -c init-db-check
+   ```
+   *Output shows:*
+   `nc: getaddrinfo for host "db-servcie" port 5432: Name or service not known`
+
+3. **Edit & Correct the Deployment Manifest**:
+   ```bash
+   kubectl edit deployment web-app
+   ```
+   *Change `db-servcie` to `db-service` under `spec.template.spec.initContainers`.*
+
+---
+
+### 3. Top Production Causes for Init Container Failures
+
+| Cause Category | Typical Error Symptom | Common Root Cause & Solution |
+| :--- | :--- | :--- |
+| **Hostname / DNS Typo** | `nc: getaddrinfo ... Name or service not known` | Typo in service endpoint or missing namespace suffix. Correct DNS name in `initContainers.command` or env vars. |
+| **Database Readiness Delay** | `connection refused` / `timeout` | Database container taking longer to boot than init container retries. Ensure init container includes retry loop (e.g. `until nc -z ...`). |
+| **Missing Shared Volume Mount** | `No such file or directory` | Init container generates config/certificates onto `emptyDir` volume, but volume is not mounted under `volumeMounts`. |
+| **Permission Denied (`non-root`)** | `Exit Code 126` / `Permission denied` | Init container runs as `non-root` user without write permissions on shared directory or script lacks `chmod +x`. |
+| **Image Pull Error in Init Container** | `Init:ImagePullBackOff` | Wrong image tag or private registry missing `imagePullSecrets` specified on init container image. |
+
+---
+
+## Verification & Expected Outcome
+Run `verify.sh` or check cluster status:
+```bash
+kubectl get deployment web-app
+```
+Expected Output:
+```
+NAME      READY   UP-TO-DATE   AVAILABLE   AGE
+web-app   1/1     1            1           3m
+```
+The pod `web-app-*` must report `READY 1/1` and status `Running` with `0` active restarts.

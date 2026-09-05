@@ -1,0 +1,48 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: api-service
+  namespace: default
+spec:
+  replicas: 4
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  selector:
+    matchLabels:
+      app: api-service
+  template:
+    metadata:
+      labels:
+        app: api-service
+        version: v2
+    spec:
+      containers:
+      - name: web-app
+        image: python:3.9-slim
+        command: ["python3", "-c"]
+        args:
+        - |
+          import http.server, socketserver
+          class Handler(http.server.SimpleHTTPRequestHandler):
+              def do_GET(self):
+                  if self.path == "/health":
+                      self.send_response(200)
+                      self.send_header("Content-type", "text/plain")
+                      self.end_headers()
+                      self.wfile.write(b"OK")
+                  else:
+                      self.send_response(404)
+                      self.end_headers()
+          with socketserver.TCPServer(("", 8080), Handler) as httpd:
+              httpd.serve_forever()
+        ports:
+        - containerPort: 8080
+        readinessProbe:
+          httpGet:
+            path: /healthz
+            port: 8080
+          initialDelaySeconds: 1
+          periodSeconds: 2

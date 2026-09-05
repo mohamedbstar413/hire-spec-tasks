@@ -1,0 +1,100 @@
+# Kubernetes Lab: Debugging Stuck Rolling Update (Readiness Probe Failure)
+
+## Background Scenario
+A deployment update was initiated for `api-service` to transition from `v1` to `v2`. However, the rolling update has stalled mid-process. 
+
+The 4 existing pods running `v1` remain active and will not terminate, while 1 new surge pod created for `v2` is stuck in `0/1 Running` state. Kubernetes refuses to proceed with the rollout, keeping all old pods alive to preserve service availability.
+
+Your objective as a DevOps / Kubernetes Engineer is to inspect the rollout progress and surge pod event logs, identify why the new revision fails readiness checks, fix the configuration error, and ensure the deployment completes rollout with all **4 replicas** reaching `4/4 READY`.
+
+---
+
+## Symptoms Observed
+- `kubectl rollout status deployment api-service` hangs with:
+  ```
+  Waiting for deployment "api-service" rollout to finish: 1 out of 4 new replicas have been updated...
+  ```
+- `kubectl get pods -l app=api-service` displays 4 old pods in `1/1 Running` and 1 new surge pod in `0/1 Running`.
+- Running `kubectl describe pod -l version=v2` displays:
+  ```
+  Warning  Unhealthy  Readiness probe failed: HTTP probe failed with statuscode 404
+  ```
+
+---
+
+## Task Objectives
+1. Inspect the deployment rollout status:
+   ```bash
+   kubectl rollout status deployment api-service
+   ```
+2. Inspect events on the failing surge pod:
+   ```bash
+   kubectl describe pod -l version=v2
+   ```
+3. Identify that `readinessProbe.httpGet.path` targets `/healthz`, which returns `404 Not Found` (the application serves readiness on `/health`).
+4. Update `readinessProbe.httpGet.path` to `/health` in `/app/manifests.yaml` (or via `kubectl edit deployment api-service`) and re-apply:
+   ```bash
+   kubectl apply -f /app/manifests.yaml
+   ```
+   *(Alternatively, executing `kubectl rollout undo deployment api-service` rolls back to v1)*
+5. Verify that the surge pod passes readiness checks, old pods terminate cleanly, and `api-service` reaches `4/4 READY`.
+
+---
+
+## Troubleshooting Guide & Common Production Causes for Stuck Rolling Updates
+
+### 1. How Kubernetes `RollingUpdate` Strategy Protects Availability
+- **`maxUnavailable` & `maxSurge`**: Setting `maxUnavailable: 0` instructs Kubernetes to never terminate existing working pods until new surge pods (`maxSurge: 1`) pass their `readinessProbe`.
+- **Readiness Probe Gate**: If the new pod revision fails its readiness probe (e.g. returns 404/500 or times out), Kubernetes marks the new pod as `Unready` and **pauses the rollout indefinitely** to prevent taking down healthy pods.
+
+---
+
+### 2. Diagnostic Steps
+
+1. **Check Rollout Status**:
+   ```bash
+   kubectl rollout status deployment api-service
+   ```
+
+2. **Inspect Surge Pod Events & Health Checks**:
+   ```bash
+   kubectl describe pod -l version=v2
+   ```
+   *Look for `Unhealthy: Readiness probe failed`.*
+
+3. **Update Readiness Probe Path**:
+   Correct `readinessProbe.httpGet.path` in manifest:
+   ```yaml
+   readinessProbe:
+     httpGet:
+       path: /health
+       port: 8080
+     initialDelaySeconds: 1
+     periodSeconds: 2
+   ```
+
+---
+
+### 3. Top Production Causes for Stuck Rolling Updates
+
+| Cause Category | Typical Error Message | Common Root Cause & Solution |
+| :--- | :--- | :--- |
+| **Failing Readiness Probes** | `Readiness probe failed: ... statuscode 404/500` | New pod revision fails readiness check. Correct probe endpoint path, port, or delay in pod spec. |
+| **Image Pull Error on Surge Pod** | `ImagePullBackOff` / `ErrImagePull` | New image tag does not exist or registry credentials missing. Update image tag or imagePullSecrets. |
+| **Boot Crash on New Revision** | `CrashLoopBackOff` | New application code crashes on boot due to missing env var, DB connection error, or config mismatch. |
+| **Node Resource Quota Exhaustion** | `Insufficient cpu/memory` | Cluster lacks resources to schedule `maxSurge` pods. Reduce `maxSurge` or scale cluster node capacity. |
+| **Hanging PreStop Hook** | `Terminating` hangs | Old pods fail to terminate because container `preStop` hook script is sleeping or hanging indefinitely. |
+
+---
+
+## Verification & Expected Outcome
+Run `verify.sh` or inspect deployment:
+```bash
+kubectl get deployment api-service
+```
+Expected Output:
+```
+NAME          READY   UP-TO-DATE   AVAILABLE   AGE
+api-service   4/4     4            4           5m
+```
+All 4 replicas must show `READY 4/4`, `UP-TO-DATE 4`, and status `Running` with zero unready pods.

@@ -1,0 +1,117 @@
+# Kubernetes Lab: Debugging NetworkPolicy Blocking CoreDNS (DNS Resolution Failures)
+
+## Background Scenario
+Applications running inside the `app-server` deployment are failing to resolve internal Kubernetes service hostnames (e.g. `kubernetes.default`) and external domain names. Diagnostic tests show that **all DNS resolution requests time out** when initiated from inside the `app-server` pod.
+
+Your objective as a DevOps / Kubernetes Engineer is to inspect the active `NetworkPolicy` objects in the namespace, identify why DNS queries sent to CoreDNS are blocked, update the NetworkPolicy to allow egress on DNS port 53 (UDP & TCP), and restore full DNS resolution capability.
+
+---
+
+## Symptoms Observed
+- Executing `nslookup kubernetes.default` or `curl http://kubernetes.default` inside `app-server` fails with:
+  ```
+  curl: (6) Could not resolve host: kubernetes.default
+  ```
+- Connecting directly via cluster IP (`curl http://10.96.0.1`) succeeds, confirming IP network routing is operational while DNS resolution is blocked.
+
+---
+
+## Task Objectives
+1. Test DNS resolution from `app-server`:
+   ```bash
+   kubectl exec deployment/app-server -- nslookup kubernetes.default
+   ```
+2. List and inspect active NetworkPolicies in namespace `default`:
+   ```bash
+   kubectl get netpol
+   kubectl describe netpol app-egress-policy
+   ```
+3. Identify that `app-egress-policy` restricts egress traffic for `app: app-server` and omits port 53 (UDP & TCP) required by CoreDNS.
+4. Update `app-egress-policy` in `/app/manifests.yaml` (or via `kubectl edit netpol app-egress-policy`) to add egress rules permitting UDP and TCP traffic on port `53`:
+   ```yaml
+   egress:
+   - ports:
+     - protocol: UDP
+       port: 53
+     - protocol: TCP
+       port: 53
+   - ports:
+     - protocol: TCP
+       port: 80
+     - protocol: TCP
+       port: 443
+   ```
+5. Verify that `nslookup kubernetes.default` succeeds and returns the cluster IP address.
+
+---
+
+## Troubleshooting Guide & Common Production Causes for DNS NetworkPolicy Blockers
+
+### 1. How CoreDNS and Egress NetworkPolicies Interact
+- **Default Egress Behavior**: When no `Egress` NetworkPolicy selects a Pod, all outbound traffic (including DNS queries sent to CoreDNS at `10.96.0.10:53`) is permitted.
+- **Egress Policy Lockout**: The moment an `Egress` NetworkPolicy selects a Pod, **all unlisted outbound traffic is blocked**. If the policy omits UDP/TCP port 53, the Pod can no longer query CoreDNS, causing all hostname lookups to fail immediately!
+
+---
+
+### 2. Diagnostic Steps
+
+1. **Test Hostname vs IP Connectivity**:
+   ```bash
+   # Test IP direct connection (bypasses DNS)
+   kubectl exec deployment/app-server -- curl -s --connect-timeout 3 http://10.96.0.1
+   
+   # Test Hostname resolution (requires CoreDNS port 53)
+   kubectl exec deployment/app-server -- nslookup kubernetes.default
+   ```
+
+2. **Inspect Egress Rules in Active NetworkPolicies**:
+   ```bash
+   kubectl describe netpol app-egress-policy
+   ```
+   *Check `Egress Rules` section. Look for missing port 53 under allowed egress ports.*
+
+3. **Add DNS Egress Rule to Policy**:
+   Update `app-egress-policy` manifest:
+   ```yaml
+   spec:
+     podSelector:
+       matchLabels:
+         app: app-server
+     policyTypes:
+     - Egress
+     egress:
+     - ports:
+       - protocol: UDP
+         port: 53
+       - protocol: TCP
+         port: 53
+   ```
+
+---
+
+### 3. Top Production Causes for CoreDNS / DNS NetworkPolicy Failures
+
+| Cause Category | Typical Symptom | Common Root Cause & Solution |
+| :--- | :--- | :--- |
+| **Egress Policy Omitting Port 53** | `Could not resolve host` / `DNS timeout` | Egress network policy applied to pod without explicit rules allowing UDP/TCP port 53 to CoreDNS. Add port 53 egress rule. |
+| **`namespaceSelector` Blocking `kube-system`** | `DNS timeout` on cross-namespace lookup | Policy restricts egress `to.podSelector` for application pods, but omits `namespaceSelector` for `kube-system` CoreDNS pods. |
+| **UDP-Only Port 53 Allowed (TCP 53 Blocked)** | Large DNS records fail | Egress policy allows UDP 53 but blocks TCP 53; large DNS responses (e.g. SRV records, multi-IP endpoints) fail over to TCP and drop. Allow both UDP and TCP 53. |
+| **CoreDNS CrashLoopBackOff** | `Connection refused` on `10.96.0.10:53` | CoreDNS pods in `kube-system` unready due to memory limits, node disk pressure, or upstream DNS forwarding loops. |
+| **NodeLocal DNSCache Enforcement** | DNS timeout on local node | Cluster uses NodeLocal DNSCache, but local node IP (`169.254.20.10`) is blocked by pod egress network policy rules. |
+
+---
+
+## Verification & Expected Outcome
+Run `verify.sh` or test with `kubectl`:
+```bash
+kubectl exec deployment/app-server -- nslookup kubernetes.default
+```
+Expected Output:
+```
+Server:         10.96.0.10
+Address:        10.96.0.10#53
+
+Name:   kubernetes.default.svc.cluster.local
+Address: 10.96.0.1
+```
+DNS resolution completes instantly returning the valid cluster IP address with zero errors.

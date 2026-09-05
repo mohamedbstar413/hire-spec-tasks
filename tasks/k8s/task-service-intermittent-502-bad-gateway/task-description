@@ -1,0 +1,93 @@
+# Kubernetes Lab: Debugging Intermittent 502 Bad Gateway Errors Behind a Service
+
+## Background Scenario
+Users are reporting intermittent **HTTP 502 Bad Gateway** errors when sending requests to a backend service (`web-api-service`). Testing confirms that approximately 25% of incoming HTTP requests to `web-api-service:80` fail with `502 Bad Gateway`, while 75% succeed with `200 OK`.
+
+Your objective as a DevOps / Kubernetes Engineer is to investigate the Kubernetes Service endpoints, identify why a subset of requests fail, fix the Service selector or pod labels, and ensure **100% of incoming HTTP requests** succeed with `200 OK`.
+
+---
+
+## Symptoms Observed
+- Sending multiple GET requests to `web-api-service:80` returns intermittent `502 Bad Gateway`:
+  - Request 1 -> `200 OK`
+  - Request 2 -> `200 OK`
+  - Request 3 -> `502 Bad Gateway` (Failed!)
+  - Request 4 -> `200 OK`
+- `kubectl get endpoints web-api-service` lists 4 registered pod IP addresses.
+
+---
+
+## Task Objectives
+1. Inspect the Service configuration and active endpoints:
+   ```bash
+   kubectl get service web-api-service -o yaml
+   kubectl get endpoints web-api-service
+   ```
+2. Inspect all pods currently matched by selector `app=web-api`:
+   ```bash
+   kubectl get pods -l app=web-api --show-labels
+   ```
+3. Identify the faulty deployment (`web-api-broken-canary`) whose pod is registered as a Service endpoint but returns `502 Bad Gateway`.
+4. Fix the issue by doing one of the following:
+   - Update `web-api-service` selector to match `app: web-api, tier: frontend` in `/app/manifests.yaml` (or via `kubectl edit service web-api-service`).
+   - OR remove/update the `app=web-api` label from `web-api-broken-canary`.
+   - OR delete the faulty deployment (`kubectl delete deployment web-api-broken-canary`).
+5. Verify that 100% of requests sent to `web-api-service` return `200 OK`.
+
+---
+
+## Troubleshooting Guide & Common Production Causes for Intermittent 502 Errors
+
+### 1. How Kubernetes Services Load-Balance Requests
+- **Service Endpoints**: A Kubernetes Service continuously monitors pods matching `spec.selector` and maintains a list of `Endpoints` (pod IP + container port).
+- **Round-Robin Load Balancing**: `kube-proxy` (via iptables/IPVS) distributes client requests across all registered endpoints.
+- **Intermittent Failures**: If 1 out of 4 endpoints registered under a Service is unhealthy, misconfigured, or returning error codes, ~25% of all client connections will fail!
+
+---
+
+### 2. Diagnostic Steps
+
+1. **Check Service Endpoints**:
+   ```bash
+   kubectl get endpoints web-api-service
+   ```
+2. **List All Pods Matching the Service Selector**:
+   ```bash
+   kubectl get pods -l app=web-api --show-labels -o wide
+   ```
+3. **Test Each Pod IP Directly**:
+   ```bash
+   # Test individual pod IPs directly to isolate the failing container
+   kubectl run test-curl --rm -i --tty --image=curlimages/curl -- curl -i http://<pod-ip>:8080
+   ```
+4. **Fix Service Selector or Pod Labels**:
+   Update `web-api-service` selector to be more specific (`app: web-api, tier: frontend`):
+   ```yaml
+   spec:
+     selector:
+       app: web-api
+       tier: frontend
+   ```
+
+---
+
+### 3. Top Production Causes for Intermittent 502 / 503 Errors Behind K8s Services
+
+| Cause Category | Typical Symptom | Common Root Cause & Solution |
+| :--- | :--- | :--- |
+| **Overly Broad Service Selector** | Intermittent 502 / 404 / Error | Service selector `app: web-api` matches unexpected pods (e.g. legacy/canary pods, test pods, or auxiliary containers). |
+| **Missing / Delayed Readiness Probe** | Intermittent Connection Refused during scaling | New pod added to Service Endpoints before HTTP server finishes booting. Add `readinessProbe` to pod spec. |
+| **TargetPort Mismatch on Sub-set of Pods** | Intermittent Connection Refused | A newly deployed pod revision listens on port `8081` while Service `targetPort` routes to `8080`. |
+| **Unhealthy / Crashing Pod Replica** | Intermittent 502 Bad Gateway | 1 pod out of N is running out of memory (OOM), throwing uncaught 500/502 exceptions, or losing database connections. |
+| **Ungraceful Termination during Rollout** | Intermittent 502 during deployment updates | Terminating pods receive traffic before iptables rules are updated. Implement `preStop` hook or graceful HTTP server drain. |
+
+---
+
+## Verification & Expected Outcome
+Run `verify.sh` or test with `curl`:
+```bash
+# Send 20 sequential requests to web-api-service
+for i in {1..20}; do curl -s -o /dev/null -w "%{http_code}\n" http://web-api-service; done
+```
+Expected Output:
+20 consecutive `200` responses with **0 failures or 502 Bad Gateway errors**.

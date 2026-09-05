@@ -1,0 +1,84 @@
+# Kubernetes Lab: Debugging StatefulSet PVC Retention Policy (PVC Not Deleted After Deletion/Scale-down)
+
+## Background Scenario
+An operations team notices that temporary stateful workloads managed by StatefulSet `stateful-app` leave behind unused PersistentVolumeClaims (`PVCs`) whenever the StatefulSet is scaled down or deleted. Over time, these orphaned PVCs accumulate and consume disk storage quota and volume provisioner allocations.
+
+By default in Kubernetes, PVCs generated from a StatefulSet `volumeClaimTemplates` specification are **retained** (`Retain`) when pods or StatefulSets are deleted or scaled down to prevent accidental data loss.
+
+However, for this specific microservice, the architecture requires that scaling down or deleting the StatefulSet automatically cleans up associated PVCs.
+
+Your objective as a DevOps / Kubernetes Engineer is to configure `persistentVolumeClaimRetentionPolicy` on `stateful-app` so that both `whenDeleted` and `whenScaled` policies are set to `Delete`.
+
+---
+
+## Symptoms Observed
+- Scaling down or deleting `stateful-app` leaves `data-store-stateful-app-0` and `data-store-stateful-app-1` PVCs intact in `Bound` state.
+- `kubectl get statefulset stateful-app -o yaml` does not specify `.spec.persistentVolumeClaimRetentionPolicy`, causing Kubernetes to default to `whenDeleted: Retain` and `whenScaled: Retain`.
+
+---
+
+## Task Objectives
+1. Inspect the StatefulSet specification:
+   ```bash
+   kubectl get statefulset stateful-app -o yaml
+   ```
+2. Identify that `.spec.persistentVolumeClaimRetentionPolicy` is missing or set to `Retain`.
+3. Update `/app/manifests.yaml` (or edit the StatefulSet) to add:
+   ```yaml
+   spec:
+     persistentVolumeClaimRetentionPolicy:
+       whenDeleted: Delete
+       whenScaled: Delete
+   ```
+4. Re-apply the manifest (`kubectl apply -f /app/manifests.yaml`) and verify the updated retention policy.
+
+---
+
+## Troubleshooting Guide & Common Production Causes for StatefulSet PVC Retention Issues
+
+### 1. StatefulSet PVC Lifecycle Mechanics
+- **Default Kubernetes Behavior**: `volumeClaimTemplates` generate distinct PVCs for each ordinal index (e.g. `data-store-app-0`, `data-store-app-1`). Deleting the Pod or StatefulSet **does NOT** delete the PVC by default.
+- **`persistentVolumeClaimRetentionPolicy` (Kubernetes 1.23+)**:
+  - `whenDeleted`: Controls PVC retention when the StatefulSet is deleted (`Delete` vs `Retain`).
+  - `whenScaled`: Controls PVC retention when replicas count is decreased (`Delete` vs `Retain`).
+
+---
+
+### 2. Diagnostic Steps
+
+1. **Check Retention Policy Configuration**:
+   ```bash
+   kubectl get statefulset stateful-app -o jsonpath='{.spec.persistentVolumeClaimRetentionPolicy}'
+   ```
+
+2. **Update Policy in Spec**:
+   ```yaml
+   spec:
+     persistentVolumeClaimRetentionPolicy:
+       whenDeleted: Delete
+       whenScaled: Delete
+   ```
+
+---
+
+### 3. Top Production Causes for Orphaned StatefulSet PVCs
+
+| Cause Category | Typical Symptom | Common Root Cause & Solution |
+| :--- | :--- | :--- |
+| **Default `Retain` Behavior** | PVCs remain after `kubectl delete statefulset` | Kubernetes default retains PVCs to safeguard data. Add `persistentVolumeClaimRetentionPolicy` with `whenDeleted: Delete`. |
+| **Scale-Down Retention** | PVCs remain after scaling from 5 to 2 replicas | `whenScaled` defaults to `Retain`. Add `whenScaled: Delete` to purge unneeded PVCs automatically upon scale-down. |
+| **ReclaimPolicy Mismatch** | PV status stuck in `Released` | StorageClass `persistentVolumeReclaimPolicy` is set to `Retain` instead of `Delete`. PVC deletion leaves PVs behind. Update StorageClass or clean up PVs. |
+| **Finalizer Deadlock** | PVC stuck in `Terminating` | PVC finalizer `kubernetes.io/pvc-protection` waits until active Pod releases mount. Ensure Pod termination completes. |
+
+---
+
+## Verification & Expected Outcome
+Run `verify.sh` or inspect StatefulSet retention policy:
+```bash
+kubectl get statefulset stateful-app -o jsonpath='{.spec.persistentVolumeClaimRetentionPolicy}'
+```
+Expected Output:
+```json
+{"whenDeleted":"Delete","whenScaled":"Delete"}
+```
+`verify.sh` exits with return code `0`.

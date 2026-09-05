@@ -1,0 +1,32 @@
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: compute-quota
+  namespace: default
+spec:
+  hard:
+    requests.cpu: "2"
+    requests.memory: "2Gi"
+    limits.cpu: "4"
+    limits.memory: "4Gi"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: restricted-app
+  namespace: default
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: restricted-app
+  template:
+    metadata:
+      labels:
+        app: restricted-app
+    spec:
+      containers:
+      - name: web-container
+        image: nginx:1.25-alpine
+        ports:
+        - containerPort: 80

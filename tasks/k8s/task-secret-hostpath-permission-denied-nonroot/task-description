@@ -1,0 +1,97 @@
+# Kubernetes Lab: Debugging Secret Volume Permission Denied (HostPath + Non-Root User)
+
+## Background Scenario
+A secure microservice (`secure-service`) is configured to run as an unprivileged non-root user (`runAsNonRoot: true`, `runAsUser: 10001`). During container startup, the entrypoint script attempts to read API key credentials from `/var/app/secrets/api-key.txt`.
+
+However, the pod is stuck in `CrashLoopBackOff`. Inspecting container logs reveals:
+`cat: can't open '/var/app/secrets/api-key.txt': Permission denied`
+
+The deployment manifest misconfigures the volume as a node `hostPath` volume (`/var/app/secrets-data`) owned by host `root:root` with restricted read permissions (`0700`), preventing the non-root container process (`UID 10001`) from accessing the secrets directory.
+
+Your objective as a DevOps / Kubernetes Engineer is to update `/app/manifests.yaml` to replace the node `hostPath` volume with a native Kubernetes `Secret` volume referencing `db-api-secret`, allowing the non-root container to read credentials cleanly and reach `1/1 Ready` state.
+
+---
+
+## Symptoms Observed
+- `kubectl get deployment secure-service` displays `READY: 0/1`.
+- `kubectl get pods -l app=secure-service` displays `STATUS: CrashLoopBackOff`.
+- Pod logs (`kubectl logs -l app=secure-service`) display permission failures:
+  ```
+  Reading secret...
+  cat: can't open '/var/app/secrets/api-key.txt': Permission denied
+  ```
+
+---
+
+## Task Objectives
+1. Inspect the crashing container logs:
+   ```bash
+   kubectl get pods -l app=secure-service
+   kubectl logs -l app=secure-service
+   ```
+2. Inspect the Deployment volume configuration in `/app/manifests.yaml`:
+   ```bash
+   kubectl get deployment secure-service -o yaml
+   ```
+3. Identify that `secret-volume` uses a `hostPath` volume (`/var/app/secrets-data`) instead of Kubernetes Secret volume mounting.
+4. Update `/app/manifests.yaml` (or edit deployment) to use a native Kubernetes `secret` volume mount:
+   ```yaml
+   spec:
+     template:
+       spec:
+         volumes:
+         - name: secret-volume
+           secret:
+             secretName: db-api-secret
+   ```
+5. Re-apply the manifest (`kubectl apply -f /app/manifests.yaml`) and verify that `secure-service` mounts `db-api-secret` successfully and reaches `1/1 Running` (`READY 1/1`).
+
+---
+
+## Troubleshooting Guide & Common Production Causes for Volume Permission Denied Errors
+
+### 1. Root-Owned HostPath Filesystem vs Non-Root Containers
+- **Linux UID/GID Isolation**: When containers run as non-root UIDs (e.g. `10001`), mounted host directories owned by `root` (`UID 0`) with `0700` / `0755` permissions reject read/write operations from the non-root container process.
+- **Native Secret Volume Benefits**: Native Kubernetes `secret` volumes automatically manage permission bits and file ownership in-memory (`tmpfs`), avoiding node host filesystem permission conflicts.
+
+---
+
+### 2. Diagnostic Steps
+
+1. **Check Pod Security Context**:
+   ```bash
+   kubectl get deployment secure-service -o jsonpath='{.spec.template.spec.securityContext}'
+   ```
+
+2. **Inspect Container Startup Error Logs**:
+   ```bash
+   kubectl logs deployment/secure-service
+   ```
+
+3. **Verify Volume Mounting Mechanism**:
+   Ensure application credentials managed in Kubernetes `Secret` objects are mounted using `volumes[*].secret` or `envFrom[*].secretRef`, not node local `hostPath`.
+
+---
+
+### 3. Top Production Causes for Volume Access Failures in Non-Root Pods
+
+| Cause Category | Typical Log Error | Common Root Cause & Solution |
+| :--- | :--- | :--- |
+| **HostPath Permission Denied** | `open /path: permission denied` | Non-root container (`UID 10001`) trying to read/write `root`-owned hostPath directory. Replace hostPath with PVC/Secret volume. |
+| **Missing `fsGroup` SecurityContext** | `permission denied` | Persistent volume mounted with root ownership. Add `securityContext.fsGroup: 10001` so k8s changes volume ownership to match container GID. |
+| **Secret Default Mode** | `permission denied` (strict mode) | Secret volume mounted with `defaultMode: 0000` or invalid octal mode. Set `defaultMode: 0640` or `0400`. |
+| **ReadOnly Root Filesystem** | `read-only file system` | Container has `readOnlyRootFilesystem: true` and application tries writing to non-mounted directory. Mount `emptyDir` on writable paths. |
+
+---
+
+## Verification & Expected Outcome
+Run `verify.sh` or inspect deployment status:
+```bash
+kubectl get deployment secure-service
+```
+Expected Output:
+```
+NAME             READY   UP-TO-DATE   AVAILABLE   AGE
+secure-service   1/1     1            1           5m
+```
+`verify.sh` exits with return code `0`.

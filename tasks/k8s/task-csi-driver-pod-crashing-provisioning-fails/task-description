@@ -1,0 +1,88 @@
+# Kubernetes Lab: Debugging CSI Driver Controller Crash (Dynamic Provisioning Failure)
+
+## Background Scenario
+A persistent storage application team reports that new PersistentVolumeClaims (`PVCs`) requested via StorageClass `csi-custom-sc` remain permanently stuck in `Pending` state.
+
+Upon investigating cluster components in the `kube-system` namespace, you discover that the Container Storage Interface (`CSI`) provisioner controller deployment `csi-driver-controller` is repeatedly crashing in `CrashLoopBackOff`. 
+
+Without a running CSI driver controller, the Kubernetes API server external-provisioner cannot handle PVC binding or volume allocation, breaking all dynamic storage provisioning in the cluster.
+
+Your objective as a DevOps / Kubernetes Storage Engineer is to inspect the logs of `csi-driver-controller` in namespace `kube-system`, fix the crashing container configuration, and restore the CSI driver deployment to `1/1 Ready` state.
+
+---
+
+## Symptoms Observed
+- `kubectl get pvc data-pvc` shows `STATUS: Pending`.
+- `kubectl describe pvc data-pvc` shows events:
+  ```
+  Warning  ProvisioningFailed  45s  persistentvolume-controller  waiting for a volume to be created, or volumeprovisioner "k8s.io/csi-custom-driver" not found
+  ```
+- `kubectl get deployment csi-driver-controller -n kube-system` displays `READY: 0/1`.
+- `kubectl get pods -n kube-system -l app=csi-driver-controller` displays `STATUS: CrashLoopBackOff`.
+- Inspecting pod logs (`kubectl logs -n kube-system deployment/csi-driver-controller`) shows premature container failure.
+
+---
+
+## Task Objectives
+1. Inspect the crashing CSI driver controller in `kube-system`:
+   ```bash
+   kubectl get pods -n kube-system -l app=csi-driver-controller
+   kubectl logs -n kube-system deployment/csi-driver-controller
+   kubectl describe deployment csi-driver-controller -n kube-system
+   ```
+2. Identify the misconfigured `command` / execution argument causing the container to exit immediately (`exit 1`).
+3. Update `/app/manifests.yaml` (or edit the deployment in `kube-system`) to fix the container entrypoint so that it starts successfully and remains healthy.
+4. Re-apply the manifest (`kubectl apply -f /app/manifests.yaml`) and verify that `csi-driver-controller` in `kube-system` reaches `1/1 Running` (`READY 1/1`).
+
+---
+
+## Troubleshooting Guide & Common Production Causes for CSI Driver Failures
+
+### 1. How CSI Drivers Handle Dynamic Provisioning
+- **CSI Architecture**: Consists of controller components (`csi-provisioner`, `csi-attacher`, `csi-resizer`) running as a Deployment/StatefulSet, and node components (`csi-node`) running as a DaemonSet.
+- **Controller Responsibilities**: Listens for PVC creation events matching its `StorageClass` provisioner name, calls cloud/storage APIs to allocate volumes, and creates matching `PersistentVolume` (PV) objects.
+- **Impact of Controller Crash**: If controller pods crash, new PVC creation requests accumulate in `Pending` state indefinitely.
+
+---
+
+### 2. Diagnostic Steps
+
+1. **Check Kube-System Storage Pods**:
+   ```bash
+   kubectl get pods -n kube-system -l app=csi-driver-controller
+   ```
+
+2. **Inspect Driver Logs**:
+   ```bash
+   kubectl logs -n kube-system deployment/csi-driver-controller --previous
+   ```
+
+3. **Check StorageClass Provisioner Match**:
+   ```bash
+   kubectl get storageclass csi-custom-sc -o yaml
+   ```
+
+---
+
+### 3. Top Production Causes for CSI Provisioner Crashes
+
+| Cause Category | Typical Symptom | Common Root Cause & Solution |
+| :--- | :--- | :--- |
+| **Invalid Entrypoint / Flag Typo** | `CrashLoopBackOff` | Incorrect binary arguments (e.g. invalid `--csi-address` socket path or wrong CLI flags). Correct CLI arguments. |
+| **Missing RBAC ClusterRoles** | `forbidden: cannot list persistentvolumes` | ServiceAccount bound to CSI driver lacks RBAC rules to get/list/create PVs and PVCs. Add required ClusterRoleBindings. |
+| **Cloud Credentials Secret Missing** | `Failed to authenticate with cloud provider API` | CSI driver secret containing API keys / IAM tokens missing or expired. Update cloud credentials secret. |
+| **Node Socket Directory Unmountable** | `socket file not found` | Kubelet plugin registration directory `/var/lib/kubelet/plugins_registry/` not mounted into container. Fix hostPath volume mounts. |
+
+---
+
+## Verification & Expected Outcome
+Run `verify.sh` or inspect CSI driver deployment status:
+```bash
+kubectl get deployment csi-driver-controller -n kube-system
+```
+Expected Output:
+```
+NAME                    READY   UP-TO-DATE   AVAILABLE   AGE
+csi-driver-controller   1/1     1            1           5m
+```
+`verify.sh` exits with return code `0`.

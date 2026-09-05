@@ -1,0 +1,76 @@
+# Kubernetes Lab: Debugging Deployment CrashLoopBackOff (Partial Pod Failure)
+
+## Background Scenario
+A production backend service `api-deployment` was recently scaled up from 10 to 15 replicas during a deployment update. However, monitoring alerts indicate that only **10 out of 15 pods** are currently `READY`. The remaining 5 newly created pods are stuck in a `CrashLoopBackOff` state and continuously restarting.
+
+Your goal as the DevOps/Site Reliability Engineer is to investigate the root cause, inspect the failing pods, fix the configuration issue, and restore the Deployment to a 100% healthy state (`15/15 READY`).
+
+---
+
+## Symptoms Observed
+- `kubectl get deployment api-deployment` shows `10/15` ready replicas.
+- `kubectl get pods -l app=api-server` shows 10 pods in `1/1 Running` and 5 pods in `0/1 CrashLoopBackOff`.
+- Newly spawned pods fail during container startup.
+
+---
+
+## Task Objectives
+1. Inspect the running pods and deployment status using `kubectl`.
+2. Retrieve logs from one of the crashing pods (`kubectl logs` / `kubectl describe`) to identify why the application container exits on startup.
+3. Identify the missing configuration parameter required by the application.
+4. Update the ConfigMap (`/app/configmap.yaml` or via `kubectl edit configmap api-config`) to supply the required configuration setting.
+5. Re-apply the updated manifest or trigger a rollout to verify all **15 replicas** reach `1/1 Running` and `READY 15/15`.
+
+---
+
+## Troubleshooting Guide & Common Production Causes of CrashLoopBackOff
+
+### 1. Diagnostic Steps for `CrashLoopBackOff`
+When pods enter `CrashLoopBackOff`, use the following systematic troubleshooting workflow:
+
+1. **Check Pod Overview**:
+   ```bash
+   kubectl get pods -l app=api-server -o wide
+   ```
+2. **Inspect Pod Termination Reason & Events**:
+   ```bash
+   kubectl describe pod <crashing-pod-name>
+   ```
+   *Look at the `Last State`, `Exit Code`, `Reason`, and `Events` at the bottom.*
+
+3. **Retrieve Logs from Crashing Container**:
+   ```bash
+   kubectl logs <crashing-pod-name>
+   ```
+   *If the container has already restarted multiple times, view previous logs before the crash:*
+   ```bash
+   kubectl logs <crashing-pod-name> --previous
+   ```
+
+---
+
+### 2. Common Production Causes for `CrashLoopBackOff`
+
+| Root Cause Category | Typical Symptom / Exit Code | Common Example |
+| :--- | :--- | :--- |
+| **Missing Environment Variable / Config Key** | `Exit Code 1` | Application throws uncaught exception or fatal error due to missing required ConfigMap or Secret key on startup. |
+| **Invalid/Missing Mounted File** | `Exit Code 1` | Volume mount path incorrect, mounted ConfigMap missing expected filename or JSON/YAML formatting error. |
+| **Out of Memory (OOMKilled)** | `Exit Code 137` | Container exceeds `resources.limits.memory`. Linux OOM killer sends SIGKILL (9) to the process. |
+| **Command / Entrypoint Not Found** | `Exit Code 127` / `Exit Code 126` | Dockerfile `CMD` or Kubernetes `command`/`args` points to a non-existent binary or shell script without execute permissions. |
+| **Liveness Probe Failure** | `Container Terminated` | Liveness probe endpoints returns non-2xx status code or times out, forcing Kubernetes to kill and restart the pod. |
+| **Port / Network Socket Conflict** | `Exit Code 1` | Port already bound, or container attempts to bind to `127.0.0.1` inside a pod sharing network space. |
+| **Database / Upstream Connection Timeout** | `Exit Code 1` | App expects DB connection on boot without retry backoff logic; fails immediately if DB is unreachable. |
+
+---
+
+## Verification & Expected Outcome
+Run `verify.sh` or check with `kubectl`:
+```bash
+kubectl get deployment api-deployment
+```
+Expected Output:
+```
+NAME             READY   UP-TO-DATE   AVAILABLE   AGE
+api-deployment   15/15   15           15          5m
+```
+All 15 pods must show `READY 1/1` and status `Running` with `0` active restarts on newly created pods.

@@ -1,0 +1,97 @@
+# Kubernetes Lab: Debugging Liveness Probe Container Restarts (Failing/Slow Endpoint)
+
+## Background Scenario
+Production alerts report that pods for deployment `app-service` are trapped in a continuous restart loop (`RESTARTS: 5+`), causing service degradation and dropped user requests.
+
+Inspect event logs using `kubectl describe pod` reveals that the kubelet liveness probe is continuously failing against the container endpoint `/failing-liveness-check`:
+`Warning Unhealthy 12s kubelet Liveness probe failed: HTTP probe failed with statuscode: 404`
+
+When a liveness probe fails, Kubernetes assumes the container process is deadlocked or unrecoverable and sends a `SIGTERM` / `SIGKILL` to restart the container process. Because the probe endpoint itself is misconfigured, the container is killed repeatedly immediately after starting up.
+
+Your objective as a DevOps / Kubernetes Engineer is to inspect the liveness probe configuration in `/app/manifests.yaml`, update `livenessProbe` to target a valid endpoint (`/`) with appropriate timeout/threshold parameters, re-apply the deployment, and bring `app-service` to a stable `1/1 Ready` state with zero restarts.
+
+---
+
+## Symptoms Observed
+- `kubectl get deployment app-service` displays `READY: 0/1`.
+- `kubectl get pods -l app=app-service` shows incrementing restart counts (`RESTARTS: 4`, `RESTARTS: 5`).
+- `kubectl describe pod -l app=app-service` displays event warnings:
+  ```
+  Warning  Unhealthy  8s (x3 over 20s)  kubelet  Liveness probe failed: HTTP probe failed with statuscode: 404
+  Normal   Killing    8s                kubelet  Container web failed liveness probe, will be restarted
+  ```
+
+---
+
+## Task Objectives
+1. Inspect pod events and container restart history:
+   ```bash
+   kubectl get pods -l app=app-service
+   kubectl describe pod -l app=app-service
+   ```
+2. Identify the failing liveness probe configuration:
+   - `httpGet.path: /failing-liveness-check` returns 404.
+   - `failureThreshold: 1` kills the container instantly on a single probe failure.
+3. Update `/app/manifests.yaml` (or edit deployment):
+   Fix `livenessProbe` parameters:
+   ```yaml
+   livenessProbe:
+     httpGet:
+       path: /
+       port: 80
+     initialDelaySeconds: 10
+     periodSeconds: 5
+     timeoutSeconds: 3
+     failureThreshold: 3
+   ```
+4. Re-apply the manifest (`kubectl apply -f /app/manifests.yaml`) and verify that container restarts cease and `app-service` reaches `1/1 Ready` (`READY 1/1`).
+
+---
+
+## Troubleshooting Guide & Common Production Causes for Liveness Probe Container Kills
+
+### 1. Difference Between Liveness and Readiness Probes
+- **Liveness Probe**: Determines if the container process is alive and functioning. When liveness probe fails beyond `failureThreshold`, kubelet **restarts the container**.
+- **Readiness Probe**: Determines if the container is ready to handle traffic. When readiness probe fails, kubelet **removes the pod from Service endpoints** without restarting it.
+
+---
+
+### 2. Diagnostic Steps
+
+1. **Check Pod Restart Counts**:
+   ```bash
+   kubectl get pods -l app=app-service
+   ```
+
+2. **Inspect Kubelet Container Killing Events**:
+   ```bash
+   kubectl describe pod -l app=app-service
+   ```
+
+3. **Verify Liveness Endpoint Overhead**:
+   Ensure liveness probe hits a lightweight status endpoint (e.g. `/health` or `/live`) rather than heavy DB queries or slow calculations that time out under load.
+
+---
+
+### 3. Top Production Causes for Liveness Probe Restarts
+
+| Cause Category | Typical Event Log | Common Root Cause & Remediation |
+| :--- | :--- | :--- |
+| **Invalid Endpoint Path** | `HTTP probe failed with statuscode: 404` | Probe path set to wrong URL path (`/failing-liveness-check`). Point probe to `/` or `/health`. |
+| **Short Initial Delay (`initialDelaySeconds`)** | `Liveness probe failed` during warmup | App takes 15s to initialize, but probe starts at 1s. Increase `initialDelaySeconds`. |
+| **Aggressive Timeout (`timeoutSeconds: 1`)** | `context deadline exceeded` | Probe endpoint takes > 1s under heavy load. Increase `timeoutSeconds` (e.g. `3s` to `5s`). |
+| **Heavy Probe Logic** | `probe timed out` | Probe code executes expensive database queries or external API calls. Simplify health endpoint logic. |
+
+---
+
+## Verification & Expected Outcome
+Run `verify.sh` or inspect deployment:
+```bash
+kubectl get deployment app-service
+```
+Expected Output:
+```
+NAME          READY   UP-TO-DATE   AVAILABLE   AGE
+app-service   1/1     1            1           5m
+```
+`verify.sh` exits with return code `0`.

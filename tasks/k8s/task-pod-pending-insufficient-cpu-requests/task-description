@@ -1,0 +1,110 @@
+# Kubernetes Lab: Debugging Pod Pending with "Insufficient cpu" (Excessive Resource Requests)
+
+## Background Scenario
+A background worker deployment (`compute-app`) was scaled to 4 replicas. However, only 2 pods have been scheduled and reach `1/1 Running`, while the remaining 2 pods are stuck in `Pending` state.
+
+When inspecting the pending pods, `kubectl describe` reports `0/1 nodes are available: 1 Insufficient cpu`. However, cluster monitoring metrics (`kubectl top nodes`) show that physical node CPU usage is under 10% and the physical host has ample free CPU capacity.
+
+Your objective as a DevOps / Kubernetes Engineer is to inspect the pod scheduling events, analyze node resource allocations vs. pod CPU requests, update the deployment resource requests to a realistic value, and ensure all **4 replicas** reach `1/1 Running` (`READY 4/4`).
+
+---
+
+## Symptoms Observed
+- `kubectl get pods -l app=compute-app` displays:
+  ```
+  NAME                           READY   STATUS    RESTARTS   AGE
+  compute-app-55d8f9977c-pod01   1/1     Running   0          5m
+  compute-app-55d8f9977c-pod02   1/1     Running   0          5m
+  compute-app-55d8f9977c-pod03   0/1     Pending   0          5m
+  compute-app-55d8f9977c-pod04   0/1     Pending   0          5m
+  ```
+- Running `kubectl describe pod <pending-pod-name>` displays:
+  ```
+  Warning  FailedScheduling  default-scheduler  0/1 nodes are available: 1 Insufficient cpu.
+  ```
+- `kubectl top nodes` / `kubectl describe node` shows actual physical CPU usage is low, but total allocated CPU requests (`requests.cpu`) have reached 100% of node allocatable capacity.
+
+---
+
+## Task Objectives
+1. Inspect the pending pod scheduling events:
+   ```bash
+   kubectl describe pod -l app=compute-app
+   ```
+2. Inspect node resource allocations:
+   ```bash
+   kubectl describe node
+   ```
+   *Look under `Allocated resources` -> `cpu` requests.*
+3. Identify that `resources.requests.cpu` is set to an excessive value (`2000m` / 2 cores per pod), causing CPU reservations to exceed cluster allocatable capacity.
+4. Update `resources.requests.cpu` in `/app/manifests.yaml` to a realistic value (e.g. `200m` / `0.2` cores per pod) and re-apply:
+   ```bash
+   kubectl apply -f /app/manifests.yaml
+   ```
+5. Verify that all 4 pods are scheduled and reach `1/1 Running` (`READY 4/4`).
+
+---
+
+## Troubleshooting Guide & Common Production Causes for CPU Scheduling Failures
+
+### 1. How Kubernetes Scheduler Allocates Resources
+- **Resource Reservations (`requests`)**: The Kubernetes scheduler places pods on nodes based **exclusively on `resources.requests.cpu` and `resources.requests.memory`**, NOT on actual real-time CPU usage.
+- **Physical Free CPU vs. Reserved CPU**: Even if a node is 95% idle, if existing pods have reserved 100% of the node's allocatable CPU requests, the scheduler will reject new pods with `Insufficient cpu`.
+
+---
+
+### 2. Diagnostic Steps
+
+1. **Inspect Pending Pod Event Messages**:
+   ```bash
+   kubectl describe pod <pending-pod-name>
+   ```
+   *Look for `FailedScheduling` -> `Insufficient cpu`.*
+
+2. **Check Node Resource Allocations**:
+   ```bash
+   kubectl describe nodes | grep -A 8 "Allocated resources"
+   ```
+
+3. **Update CPU Request in Manifest**:
+   Lower `resources.requests.cpu` in the Deployment spec:
+   ```yaml
+   spec:
+     template:
+       spec:
+         containers:
+         - name: worker
+           resources:
+             requests:
+               cpu: "200m"
+               memory: "128Mi"
+             limits:
+               cpu: "500m"
+               memory: "256Mi"
+   ```
+
+---
+
+### 3. Top Production Causes for CPU Scheduling Failures
+
+| Cause Category | Typical Symptom | Common Root Cause & Solution |
+| :--- | :--- | :--- |
+| **Excessive `resources.requests.cpu`** | `Insufficient cpu` / `Pending` | Pod spec requests more CPU cores than available allocatable CPU on cluster nodes. Lower `requests.cpu`. |
+| **CPU Request Millicore Typo** | `Insufficient cpu` | Developer wrote `cpu: "5000m"` (5 cores) instead of `500m` (0.5 cores) or `50m`. |
+| **Namespace `ResourceQuota` Limit** | `exceeded quota: cpu` | Namespace `ResourceQuota` hard CPU limit reached, even though physical node has free capacity. Increase quota or lower pod requests. |
+| **System / DaemonSet Over-reservation** | `Insufficient cpu` on empty node | System components (kubelet, kube-proxy, CNI, logging) reserve large allocatable CPU amounts, leaving small space for app pods. |
+| **Node Selector / Affinity Lock** | `Insufficient cpu` on 1 node | Pod uses `nodeSelector` targeting 1 node whose CPU requests are 100% allocated, ignoring other idle cluster nodes. |
+
+---
+
+## Verification & Expected Outcome
+Run `verify.sh` or inspect deployment:
+```bash
+kubectl get deployment compute-app
+```
+Expected Output:
+```
+NAME          READY   UP-TO-DATE   AVAILABLE   AGE
+compute-app   4/4     4            4           5m
+```
+All 4 replicas must show `READY 1/1` and status `Running` with zero pending pods.

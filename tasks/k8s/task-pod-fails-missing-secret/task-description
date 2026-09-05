@@ -1,0 +1,100 @@
+# Kubernetes Lab: Debugging Pod Failure Due to Missing Secret / ConfigMap
+
+## Background Scenario
+A secure backend microservice (`secure-backend-api`) was deployed into the cluster. However, the pod fails during container environment initialization and remains stuck in a `CreateContainerConfigError` status.
+
+Your objective as a DevOps / Kubernetes Engineer is to inspect the failing pod event logs, identify the missing Secret object referenced in the container environment variables, create/apply the missing Secret, and ensure the `secure-backend-api` pod reaches `1/1 Running` (`READY 1/1`).
+
+---
+
+## Symptoms Observed
+- `kubectl get pods -l app=secure-backend-api` displays:
+  ```
+  NAME                                  READY   STATUS                       RESTARTS   AGE
+  secure-backend-api-68f79d5c94-pod01   0/1     CreateContainerConfigError   0          3m
+  ```
+- Running `kubectl describe pod -l app=secure-backend-api` displays:
+  ```
+  Error: secret "db-credentials" not found
+  ```
+
+---
+
+## Task Objectives
+1. Inspect the failing pod status and event logs:
+   ```bash
+   kubectl describe pod -l app=secure-backend-api
+   ```
+2. Verify that Secret `db-credentials` does not exist in namespace `default`:
+   ```bash
+   kubectl get secret db-credentials
+   ```
+3. Create the missing Secret `db-credentials` with `username` and `password` keys by applying `/app/manifests.yaml` or running `kubectl`:
+   ```bash
+   kubectl create secret generic db-credentials --from-literal=username=admin_user --from-literal=password=SuperSecretPassword123
+   ```
+   *(Or uncomment/apply the Secret definition in `/app/manifests.yaml` via `kubectl apply -f /app/manifests.yaml`)*
+4. Verify that `kubelet` resolves the environment configuration and the pod reaches `1/1 Running` (`READY 1/1`).
+
+---
+
+## Troubleshooting Guide & Common Production Causes for Missing Secret / ConfigMap Errors
+
+### 1. Understanding Missing Secret & ConfigMap Failures
+- **Pre-Execution Configuration Binding**: Before `kubelet` spawns a container, it resolves all environment variable references (`secretKeyRef`, `configMapKeyRef`) and mounts requested volumes.
+- **Unresolved Object References**: If a referenced Secret or ConfigMap does not exist in the Pod's namespace, `kubelet` cannot construct the container environment and sets the status to `CreateContainerConfigError` or `CreateContainerError`.
+
+---
+
+### 2. Diagnostic Steps
+
+1. **Check Pod Events**:
+   ```bash
+   kubectl describe pod <pod-name>
+   ```
+   *Look for `Error: secret "<name>" not found` or `Error: configmap "<name>" not found`.*
+
+2. **Verify Object Existence**:
+   ```bash
+   kubectl get secret db-credentials
+   ```
+
+3. **Create Missing Secret**:
+   Create the Secret in namespace `default`:
+   ```yaml
+   apiVersion: v1
+   kind: Secret
+   metadata:
+     name: db-credentials
+     namespace: default
+   type: Opaque
+   stringData:
+     username: "admin_user"
+     password: "SuperSecretPassword123"
+   ```
+
+---
+
+### 3. Top Production Causes for Missing Secret / ConfigMap Errors
+
+| Cause Category | Typical Error Message | Common Root Cause & Solution |
+| :--- | :--- | :--- |
+| **Entire Secret / ConfigMap Missing** | `Error: secret "db-credentials" not found` | Secret or ConfigMap referenced in Pod spec was omitted from deployment pipeline. Create missing Secret/ConfigMap. |
+| **Namespace Mismatch** | `Error: secret "name" not found` | Secret was created in `staging` namespace, but Deployment runs in `default` namespace. Recreate Secret in target namespace. |
+| **Missing `optional: true` Flag** | `CreateContainerConfigError` | Pod spec references optional secret/configmap without setting `optional: true`. |
+| **Secret Key Name Mismatch** | `Error: secret key "key" not found` | Secret exists, but key name in secret (`db_user`) differs from key requested in pod spec (`username`). |
+| **RBAC ServiceAccount Permission Denied** | `Forbidden: cannot get secret` | ServiceAccount attached to Pod lacks RBAC permissions to read Secrets in the namespace. |
+
+---
+
+## Verification & Expected Outcome
+Run `verify.sh` or inspect deployment:
+```bash
+kubectl get deployment secure-backend-api
+```
+Expected Output:
+```
+NAME                 READY   UP-TO-DATE   AVAILABLE   AGE
+secure-backend-api   1/1     1            1           5m
+```
+The pod `secure-backend-api-*` must show `READY 1/1` and status `Running` with zero `CreateContainerConfigError` occurrences.

@@ -1,0 +1,105 @@
+# Kubernetes Lab: Debugging NetworkPolicy Blocking Inter-Pod Communication
+
+## Background Scenario
+The frontend application (`frontend`) needs to make HTTP API calls to the backend microservice (`backend-service:8080`). Both `frontend` and `backend-api` pods are running in `1/1 Running` state, and `backend-service` has active endpoints.
+
+However, HTTP requests sent from the `frontend` pod to `http://backend-service:8080` continuously time out. An investigation is required to determine why network communication between the two pods is blocked.
+
+Your objective as a DevOps / Kubernetes Engineer is to inspect the cluster network configuration, discover the blocking `NetworkPolicy`, modify the policy rules to permit HTTP traffic from `frontend`, and restore connectivity.
+
+---
+
+## Symptoms Observed
+- Executing `curl --connect-timeout 3 http://backend-service:8080` inside the `frontend` pod hangs and fails:
+  ```
+  curl: (28) Connection timed out after 3001 milliseconds
+  ```
+- Both `frontend` and `backend-api` pods show status `1/1 Running`.
+- `kubectl get endpoints backend-service` shows active pod IP on port `8080`.
+
+---
+
+## Task Objectives
+1. Test network connectivity from `frontend` to `backend-service`:
+   ```bash
+   kubectl exec -it deployment/frontend -- curl --connect-timeout 3 http://backend-service:8080
+   ```
+2. List active NetworkPolicies in namespace `default`:
+   ```bash
+   kubectl get netpol
+   kubectl describe netpol backend-netpol
+   ```
+3. Identify that `backend-netpol` isolates `app: backend-api` and only permits ingress traffic from `role: internal-admin`.
+4. Update `backend-netpol` in `/app/manifests.yaml` or via `kubectl edit netpol backend-netpol` to allow ingress traffic from pods matching `app: frontend`:
+   ```yaml
+   ingress:
+   - from:
+     - podSelector:
+         matchLabels:
+           app: frontend
+     ports:
+     - protocol: TCP
+       port: 8080
+   ```
+5. Verify that `frontend` can successfully connect to `backend-service:8080` and receives a `200 OK` response.
+
+---
+
+## Troubleshooting Guide & Common Production Causes for NetworkPolicy Failures
+
+### 1. How Kubernetes NetworkPolicies Work
+- **Default Allow vs. Isolation**: By default, pods in Kubernetes accept traffic from any source. Once a NetworkPolicy selects a Pod (via `podSelector`), that Pod becomes **isolated**, and all unlisted ingress/egress traffic is **default denied**.
+- **`podSelector` in Ingress**: To allow traffic from another Pod, `ingress.from.podSelector.matchLabels` must match the labels of the source Pod (`app: frontend`).
+
+---
+
+### 2. Diagnostic Steps
+
+1. **List NetworkPolicies**:
+   ```bash
+   kubectl get networkpolicies
+   ```
+2. **Inspect Detailed Policy Rules**:
+   ```bash
+   kubectl describe netpol backend-netpol
+   ```
+   *Look at `Spec: PodSelector` and `Ingress Allow` rules to see allowed source pod labels.*
+
+3. **Update NetworkPolicy Rule**:
+   Edit `backend-netpol` manifest:
+   ```yaml
+   spec:
+     podSelector:
+       matchLabels:
+         app: backend-api
+     ingress:
+     - from:
+       - podSelector:
+           matchLabels:
+             app: frontend
+   ```
+
+---
+
+### 3. Top Production Causes for NetworkPolicy Communication Failures
+
+| Cause Category | Typical Symptom | Common Root Cause & Solution |
+| :--- | :--- | :--- |
+| **Unmatched Source Pod Labels** | `Connection timed out` | Policy allows `role: admin` but calling pod is labeled `app: frontend`. Add `app: frontend` to `from.podSelector`. |
+| **Missing `namespaceSelector`** | `Connection timed out` across namespaces | Calling pod is in `frontend-ns` while target pod is in `backend-ns`. Add `namespaceSelector` to `ingress.from`. |
+| **Port Mismatch in Ingress Rule** | `Connection timed out` | Policy specifies TCP port `80` while app listens on port `8080`. Update `ports.port` in policy to `8080`. |
+| **Egress Policy Blocking DNS/Outbound** | `Could not resolve host` / `Timeout` | Egress policy applied to source pod blocks UDP port `53` (Kube-DNS) or outbound TCP traffic to backend IP. |
+| **CNI Engine Enforcement Missing** | Policy applied, but traffic not blocked | Kubernetes cluster using CNI plugin without policy support (e.g. basic Flannel). Ensure Calico, Cilium, or Weave is enabled. |
+
+---
+
+## Verification & Expected Outcome
+Run `verify.sh` or test with `kubectl`:
+```bash
+kubectl exec deployment/frontend -- curl --connect-timeout 3 http://backend-service:8080
+```
+Expected Output:
+```
+200 OK - Backend API Connected
+```
+The HTTP connection completes immediately returning `200 OK` with zero timeouts.

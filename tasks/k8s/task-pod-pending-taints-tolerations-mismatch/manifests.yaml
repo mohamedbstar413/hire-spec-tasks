@@ -1,0 +1,24 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: dedicated-worker
+  namespace: default
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: dedicated-worker
+  template:
+    metadata:
+      labels:
+        app: dedicated-worker
+    spec:
+      tolerations:
+      - key: "dedicated"
+        operator: "Equal"
+        value: "gpu"
+        effect: "NoSchedule"
+      containers:
+      - name: worker
+        image: python:3.9-slim
+        command: ["python3", "-c", "import time; print('Dedicated worker running...'); time.sleep(3600)"]

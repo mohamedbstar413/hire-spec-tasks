@@ -1,0 +1,94 @@
+# Kubernetes Lab: Debugging Pod Running But Not Ready (Readiness Probe Failure)
+
+## Background Scenario
+Monitoring alerts report that deployment `api-server` has zero available replicas (`READY 0/1`), despite `kubectl get pods` indicating that the pod is in phase `Running`.
+
+Because the pod fails its readiness check, Kubernetes Service endpoint controllers remove the pod IP from active Service routing, causing incoming user traffic to fail.
+
+Running `kubectl describe pod` reveals that the kubelet readiness prober gets an HTTP 404 response when querying `/healthz`:
+`Warning Unhealthy 15s kubelet Readiness probe failed: HTTP probe failed with statuscode: 404`
+
+Your objective as a DevOps / Kubernetes Engineer is to inspect pod events and container health endpoint definitions, update `/app/manifests.yaml` to point the readiness probe to a valid endpoint (`/`), and bring `api-server` to `1/1 Ready` state.
+
+---
+
+## Symptoms Observed
+- `kubectl get deployment api-server` displays `READY: 0/1`.
+- `kubectl get pods -l app=api-server` displays `STATUS: Running` with `READY: 0/1`.
+- `kubectl describe pod -l app=api-server` displays event warnings:
+  ```
+  Warning  Unhealthy  10s (x6 over 35s)  kubelet  Readiness probe failed: HTTP probe failed with statuscode: 404
+  ```
+
+---
+
+## Task Objectives
+1. Inspect the pod status and event logs:
+   ```bash
+   kubectl get pods -l app=api-server
+   kubectl describe pod -l app=api-server
+   ```
+2. Identify the failing readiness probe configuration:
+   - `httpGet.path: /healthz` returns 404.
+3. Update `/app/manifests.yaml` (or edit deployment):
+   Change `readinessProbe.httpGet.path` from `/healthz` to `/`:
+   ```yaml
+   readinessProbe:
+     httpGet:
+       path: /
+       port: 80
+     initialDelaySeconds: 2
+     periodSeconds: 5
+   ```
+4. Re-apply the manifest (`kubectl apply -f /app/manifests.yaml`) and verify that `api-server` passes the readiness check and reaches `1/1 Ready` (`READY 1/1`).
+
+---
+
+## Troubleshooting Guide & Common Production Causes for Readiness Probe Failures
+
+### 1. Difference Between Liveness and Readiness Probes
+- **Readiness Probe**: Determines whether a container is ready to accept user network traffic. Failing readiness probe keeps the pod in `Running` state but **removes the pod from Kubernetes Service Endpoints**.
+- **Liveness Probe**: Determines whether a container needs to be restarted. Failing liveness probe causes kubelet to **kill and restart the container**.
+
+---
+
+### 2. Diagnostic Steps
+
+1. **Check Pod Readiness Status**:
+   ```bash
+   kubectl get pods -o wide
+   ```
+
+2. **Inspect Kubelet Probe Events**:
+   ```bash
+   kubectl describe pod -l app=api-server
+   ```
+   *Look at `Events:` section for `Readiness probe failed` messages.*
+
+3. **Validate Application HTTP Endpoints**:
+   Exec into container or curl endpoint to check HTTP status codes.
+
+---
+
+### 3. Top Production Causes for Readiness Probe Failures
+
+| Cause Category | Typical Symptom | Common Root Cause & Solution |
+| :--- | :--- | :--- |
+| **HTTP 404 Endpoint Mismatch** | `statuscode: 404` | Probe configured to query non-existent path (`/healthz` vs `/health`). Update path in spec. |
+| **Port Mismatch / Connection Refused** | `dial tcp ... connection refused` | Probe querying wrong port (e.g. `8080` vs app port `80`). Align probe port with application containerPort. |
+| **Aggressive Timeout / Initial Delay** | `probe timed out after 1s` | `initialDelaySeconds` too short for slow application startup or `timeoutSeconds: 1` too short. Increase delay/timeout parameters. |
+| **Unhealthy Backend Dependency** | `statuscode: 503` | Application health endpoint returns 503 when DB/cache connection is down. Resolve upstream dependency issues. |
+
+---
+
+## Verification & Expected Outcome
+Run `verify.sh` or inspect deployment:
+```bash
+kubectl get deployment api-server
+```
+Expected Output:
+```
+NAME         READY   UP-TO-DATE   AVAILABLE   AGE
+api-server   1/1     1            1           5m
+```
+`verify.sh` exits with return code `0`.

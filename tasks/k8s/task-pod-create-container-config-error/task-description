@@ -1,0 +1,103 @@
+# Kubernetes Lab: Debugging Pod Stuck in CreateContainerConfigError
+
+## Background Scenario
+A web API deployment (`api-server`) was deployed into the cluster. However, the pod fails during container environment initialization and remains stuck in a `CreateContainerConfigError` status.
+
+Your objective as a DevOps / Kubernetes Engineer is to inspect the failing pod event logs, identify the missing ConfigMap key referenced in the container environment variables, update the ConfigMap, and ensure the `api-server` pod reaches `1/1 Running` (`READY 1/1`).
+
+---
+
+## Symptoms Observed
+- `kubectl get pods -l app=api-server` displays:
+  ```
+  NAME                          READY   STATUS                       RESTARTS   AGE
+  api-server-759c8d4b94-8x4z2   0/1     CreateContainerConfigError   0          3m
+  ```
+- Running `kubectl describe pod -l app=api-server` displays:
+  ```
+  Error: configmap "api-config" key "DATABASE_URL" not found
+  ```
+
+---
+
+## Task Objectives
+1. Inspect the failing pod status and event logs:
+   ```bash
+   kubectl describe pod -l app=api-server
+   ```
+2. Inspect the referenced ConfigMap `api-config`:
+   ```bash
+   kubectl get configmap api-config -o yaml
+   ```
+3. Identify that `api-config` is missing the key `DATABASE_URL` referenced in the container `env` section.
+4. Update `api-config` in `/app/manifests.yaml` (or via `kubectl edit configmap api-config`) to add the missing `DATABASE_URL` entry:
+   ```yaml
+   data:
+     ENV: production
+     PORT: "8080"
+     DATABASE_URL: "postgres://db.internal:5432/appdb"
+   ```
+5. Verify that kubelet resolves the environment configuration error and the pod reaches `1/1 Running` (`READY 1/1`).
+
+---
+
+## Troubleshooting Guide & Common Production Causes for `CreateContainerConfigError`
+
+### 1. Understanding `CreateContainerConfigError` in Kubernetes
+- **Container Environment Construction**: Before launching a container, `kubelet` evaluates all environment variables specified under `env` (such as `configMapKeyRef` or `secretKeyRef`) and mounts any required ConfigMap/Secret volumes.
+- **Immediate Initialization Failure**: If a referenced ConfigMap or Secret does not exist, or if a specific key referenced in `configMapKeyRef` is missing, `kubelet` aborts container creation and sets the status to `CreateContainerConfigError`.
+
+---
+
+### 2. Diagnostic Steps
+
+1. **Check Pod Events**:
+   ```bash
+   kubectl describe pod <pod-name>
+   ```
+   *Look for `Error: configmap "<name>" key "<key>" not found` or `Error: secret "<name>" not found`.*
+
+2. **Inspect ConfigMap / Secret Content**:
+   ```bash
+   kubectl get configmap api-config -o yaml
+   ```
+
+3. **Add Missing Key to ConfigMap**:
+   Edit ConfigMap to include the missing key:
+   ```yaml
+   apiVersion: v1
+   kind: ConfigMap
+   metadata:
+     name: api-config
+     namespace: default
+   data:
+     DATABASE_URL: "postgres://db.internal:5432/appdb"
+     PORT: "8080"
+     ENV: "production"
+   ```
+
+---
+
+### 3. Top Production Causes for `CreateContainerConfigError`
+
+| Cause Category | Typical Error Message | Common Root Cause & Solution |
+| :--- | :--- | :--- |
+| **Missing ConfigMap / Secret Key** | `Error: configmap "name" key "key" not found` | Container `valueFrom.configMapKeyRef` references a key name missing in the ConfigMap data. Add key to ConfigMap. |
+| **Missing Entire ConfigMap / Secret** | `Error: configmap "name" not found` | Pod spec references ConfigMap or Secret name that has not been created yet in the namespace. |
+| **Missing `optional: true` Flag** | `CreateContainerConfigError` | Environment variable references optional config source without setting `optional: true`. |
+| **ConfigMap / Secret Name Typo** | `Error: secret "db-secrt" not found` | Typo in `secretKeyRef.name` or `configMapKeyRef.name` in pod manifest. Correct object name in spec. |
+| **Volume Mount Key Path Error** | `Error: configmap key "app.conf" not found` | `volumes[].configMap.items[].key` specifies a key name not present in the ConfigMap. |
+
+---
+
+## Verification & Expected Outcome
+Run `verify.sh` or inspect deployment:
+```bash
+kubectl get deployment api-server
+```
+Expected Output:
+```
+NAME         READY   UP-TO-DATE   AVAILABLE   AGE
+api-server   1/1     1            1           5m
+```
+The pod `api-server-*` must show `READY 1/1` and status `Running` with zero `CreateContainerConfigError` occurrences.

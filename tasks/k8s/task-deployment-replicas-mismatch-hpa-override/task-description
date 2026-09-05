@@ -1,0 +1,107 @@
+# Kubernetes Lab: Debugging Deployment Replica Count Mismatch (HPA Override)
+
+## Background Scenario
+A web application deployment (`web-app-deployment`) was configured in the deployment manifest to run 5 replicas. However, when inspecting the cluster, the Deployment consistently shows only 1 replica running (`READY 1/1`).
+
+Attempts to manually scale the deployment (`kubectl scale deployment web-app-deployment --replicas=5`) temporarily increase the replica count, but Kubernetes automatically resets the replica count back to 1 within seconds.
+
+Your objective as a DevOps / Kubernetes Engineer is to inspect the Deployment and autoscaling objects, identify why the replica count is being overridden, update the HorizontalPodAutoscaler (HPA) configuration to maintain a minimum baseline of 5 replicas, and ensure all **5 replicas** reach `5/5 READY`.
+
+---
+
+## Symptoms Observed
+- `kubectl get deployment web-app-deployment` displays:
+  ```
+  NAME                 READY   UP-TO-DATE   AVAILABLE   AGE
+  web-app-deployment   1/1     1            1           5m
+  ```
+- Running `kubectl scale deployment web-app-deployment --replicas=5` temporarily scales the deployment up, but the replica count is immediately reset back to 1.
+- Running `kubectl describe deployment web-app-deployment` displays scaling events triggered by `horizontal-pod-autoscaler`.
+
+---
+
+## Task Objectives
+1. Inspect the Deployment status and event log:
+   ```bash
+   kubectl describe deployment web-app-deployment
+   ```
+2. List active HorizontalPodAutoscalers in namespace `default`:
+   ```bash
+   kubectl get hpa
+   kubectl describe hpa web-app-hpa
+   ```
+3. Identify that `web-app-hpa` manages `web-app-deployment` and has `minReplicas: 1`. Because actual CPU utilization is low, HPA overrides the Deployment's `spec.replicas` setting and scales it down to 1.
+4. Update `minReplicas: 5` in `/app/manifests.yaml` (or via `kubectl edit hpa web-app-hpa`) so HPA enforces a baseline of 5 replicas:
+   ```yaml
+   spec:
+     minReplicas: 5
+     maxReplicas: 10
+   ```
+5. Re-apply the manifest (`kubectl apply -f /app/manifests.yaml`) and verify that HPA scales `web-app-deployment` up to 5 replicas (`READY 5/5`).
+
+---
+
+## Troubleshooting Guide & Common Production Causes for Deployment Replica Mismatches
+
+### 1. How HorizontalPodAutoscalers (HPA) Take Ownership of Replicas
+- **HPA Controller Control Loop**: When an HPA targets a Deployment (`scaleTargetRef`), the HPA controller continuously calculates required replicas based on target metrics (CPU/Memory/Custom metrics) and overwrites the Deployment's `spec.replicas`.
+- **Manual Scaling Conflict**: Manually editing `spec.replicas` or running `kubectl scale` has no lasting effect because HPA's reconciliation loop overwrites `spec.replicas` during its next evaluation cycle (every 15 seconds by default).
+
+---
+
+### 2. Diagnostic Steps
+
+1. **Check Deployment Replica Events**:
+   ```bash
+   kubectl describe deployment web-app-deployment
+   ```
+   *Look for scaling events originating from `horizontal-pod-autoscaler`.*
+
+2. **Inspect HPA Configuration**:
+   ```bash
+   kubectl get hpa
+   kubectl describe hpa web-app-hpa
+   ```
+
+3. **Update HPA `minReplicas`**:
+   Update `minReplicas` in HPA spec:
+   ```yaml
+   apiVersion: autoscaling/v2
+   kind: HorizontalPodAutoscaler
+   metadata:
+     name: web-app-hpa
+     namespace: default
+   spec:
+     scaleTargetRef:
+       apiVersion: apps/v1
+       kind: Deployment
+       name: web-app-deployment
+     minReplicas: 5
+     maxReplicas: 10
+   ```
+
+---
+
+### 3. Top Production Causes for Deployment Replica Count Mismatches
+
+| Cause Category | Typical Symptom | Common Root Cause & Solution |
+| :--- | :--- | :--- |
+| **HPA Overriding Deployment Replicas** | `kubectl scale` constantly reset | Active HPA targets Deployment with low `minReplicas`. Update `minReplicas` in HPA spec. |
+| **Orphaned Pods / Selector Mismatch** | Deployment shows 0 new pods created | Deployment `spec.selector` matches existing standalone pods, causing ReplicaSet controller to count existing pods toward `spec.replicas`. |
+| **Namespace `ResourceQuota` Pod Limit** | `exceeded quota: hard.pods` | Namespace quota limits total pods (`hard.pods: "1"`). Pod creation rejected by quota controller. |
+| **Cluster Node CPU/RAM Exhaustion** | 1 pod Running, 4 pods Pending | Deployment requested 5 replicas, but 4 pods remain `Pending` due to `Insufficient cpu/memory`. |
+| **GitOps Controller (ArgoCD / Flux)** | Manual edits reverted | GitOps controller continuously reconciles cluster state back to git repository baseline. Commit replica change to Git repository. |
+
+---
+
+## Verification & Expected Outcome
+Run `verify.sh` or inspect deployment:
+```bash
+kubectl get deployment web-app-deployment
+```
+Expected Output:
+```
+NAME                 READY   UP-TO-DATE   AVAILABLE   AGE
+web-app-deployment   5/5     5            5           5m
+```
+The deployment must show `READY 5/5` and HPA `minReplicas` must be configured to `5`.

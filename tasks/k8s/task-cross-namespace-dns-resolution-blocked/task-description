@@ -1,0 +1,123 @@
+# Kubernetes Lab: Debugging Cross-Namespace DNS Resolution Failure
+
+## Background Scenario
+A microservices architecture is deployed across multiple Kubernetes namespaces:
+- Namespace `frontend-ns` hosts the client application (`frontend-app`).
+- Namespace `backend-ns` hosts the backend API service (`backend-service:8080`).
+
+However, pods running inside `frontend-ns` fail to resolve DNS names for services in `backend-ns`. Executing `nslookup backend-service.backend-ns.svc.cluster.local` inside `frontend-app` returns `Could not resolve host` / `DNS query timed out`.
+
+Your objective as a DevOps / Kubernetes Engineer is to inspect the NetworkPolicies applied in `frontend-ns`, identify why CoreDNS queries fail, update the policy to permit egress to CoreDNS in `kube-system`, and restore cross-namespace DNS resolution.
+
+---
+
+## Symptoms Observed
+- Executing `nslookup backend-service.backend-ns.svc.cluster.local` inside `frontend-app` (in `frontend-ns`) fails with:
+  ```
+  curl: (6) Could not resolve host: backend-service.backend-ns.svc.cluster.local
+  ```
+- Both `frontend-app` (in `frontend-ns`) and `backend-api` (in `backend-ns`) show status `1/1 Running`.
+- IP-based connections bypass DNS and succeed, confirming network routing exists between namespaces, but DNS resolution fails.
+
+---
+
+## Task Objectives
+1. Test DNS resolution from `frontend-app` in `frontend-ns`:
+   ```bash
+   kubectl exec -n frontend-ns deployment/frontend-app -- nslookup backend-service.backend-ns.svc.cluster.local
+   ```
+2. Inspect NetworkPolicies in `frontend-ns`:
+   ```bash
+   kubectl get netpol -n frontend-ns
+   kubectl describe netpol allow-dns-egress -n frontend-ns
+   ```
+3. Identify that `allow-dns-egress` defines egress to `podSelector: { matchLabels: { k8s-app: kube-dns } }` **without** a `namespaceSelector`. Because NetworkPolicies restrict `podSelector` evaluations strictly to the local namespace when `namespaceSelector` is omitted, the rule fails to match CoreDNS pods running in `kube-system`.
+4. Update `allow-dns-egress` in `/app/manifests.yaml` (or via `kubectl edit netpol allow-dns-egress -n frontend-ns`) to include `namespaceSelector`:
+   ```yaml
+   egress:
+   - to:
+     - namespaceSelector:
+         matchLabels:
+           kubernetes.io/metadata.name: kube-system
+       podSelector:
+         matchLabels:
+           k8s-app: kube-dns
+     ports:
+     - protocol: UDP
+       port: 53
+     - protocol: TCP
+       port: 53
+   ```
+5. Verify that `frontend-app` successfully resolves `backend-service.backend-ns.svc.cluster.local` and receives a `200 OK` response.
+
+---
+
+## Troubleshooting Guide & Common Production Causes for Cross-Namespace DNS Failures
+
+### 1. How NetworkPolicy Scope Rules Evaluate Selectors
+- **`podSelector` Alone (Local Scope)**: If `to.podSelector` is specified without a `namespaceSelector`, Kubernetes evaluates the label match **only within the same namespace** where the NetworkPolicy resides (`frontend-ns`).
+- **`namespaceSelector` Required for CoreDNS**: Because CoreDNS pods run in namespace `kube-system`, any egress rule targeting CoreDNS **must** include `namespaceSelector` (e.g. `namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: kube-system } }` or `namespaceSelector: {}`).
+
+---
+
+### 2. Diagnostic Steps
+
+1. **Test Cross-Namespace FQDN Lookup**:
+   ```bash
+   kubectl exec -n frontend-ns deployment/frontend-app -- nslookup backend-service.backend-ns.svc.cluster.local
+   ```
+
+2. **Inspect Policy Egress Scope**:
+   ```bash
+   kubectl get netpol allow-dns-egress -n frontend-ns -o yaml
+   ```
+   *Look for `podSelector: matchLabels: k8s-app: kube-dns` missing `namespaceSelector`.*
+
+3. **Update Policy with `namespaceSelector`**:
+   Add `namespaceSelector` to the egress rule:
+   ```yaml
+   spec:
+     podSelector:
+       matchLabels:
+         app: frontend-app
+     policyTypes:
+     - Egress
+     egress:
+     - to:
+       - namespaceSelector:
+           matchLabels:
+             kubernetes.io/metadata.name: kube-system
+         podSelector:
+           matchLabels:
+             k8s-app: kube-dns
+       ports:
+       - protocol: UDP
+         port: 53
+       - protocol: TCP
+         port: 53
+   ```
+
+---
+
+### 3. Top Production Causes for Cross-Namespace DNS Failures
+
+| Cause Category | Typical Symptom | Common Root Cause & Solution |
+| :--- | :--- | :--- |
+| **Missing `namespaceSelector` for CoreDNS** | `Could not resolve host` across namespaces | NetworkPolicy egress rule specifies `podSelector` for `k8s-app: kube-dns`, but lacks `namespaceSelector` for `kube-system`. |
+| **Short Hostname Query Across Namespaces** | `Name or service not known` | Client queries `backend-service` instead of FQDN `backend-service.backend-ns.svc.cluster.local`. Use full FQDN or add search domain. |
+| **Cross-Namespace Ingress Policy Deny** | `Connection timed out` after DNS resolve | Target pod in `backend-ns` has an ingress policy that blocks traffic coming from pods in `frontend-ns`. |
+| **Cluster DNS Domain Mismatch** | `DNS query timed out` | Application hardcodes custom domain `cluster.internal` while Kubernetes cluster uses default `cluster.local`. |
+| **Custom Pod `dnsConfig` Overrides** | `nslookup` fails on specific pods | Pod spec contains `dnsConfig.searches` or `dnsConfig.nameservers` that overrides default resolv.conf. |
+
+---
+
+## Verification & Expected Outcome
+Run `verify.sh` or test with `kubectl`:
+```bash
+kubectl exec -n frontend-ns deployment/frontend-app -- curl --connect-timeout 4 http://backend-service.backend-ns.svc.cluster.local:8080
+```
+Expected Output:
+```
+200 OK - Backend API Connected Across Namespaces
+```
+Cross-namespace DNS resolution succeeds instantly returning `200 OK`.

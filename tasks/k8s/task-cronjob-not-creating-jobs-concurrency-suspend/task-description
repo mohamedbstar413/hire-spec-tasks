@@ -1,0 +1,92 @@
+# Kubernetes Lab: Debugging CronJob Not Scheduling Jobs (Suspend & Concurrency Control)
+
+## Background Scenario
+An automated data backup process configured via CronJob `data-backup-cron` is supposed to run once every minute (`* * * * *`).
+
+However, monitoring alerts indicate that no backup jobs have been created (`ACTIVE: 0`, `LAST SCHEDULE: <none>`), and database snapshot files are missing.
+
+Upon inspecting the CronJob controller status (`kubectl get cronjob data-backup-cron`), you observe that `.spec.suspend` is set to `true`, preventing the CronJob controller from creating new `Job` resources upon schedule triggers.
+
+Your objective as a DevOps / Kubernetes Engineer is to inspect the CronJob specification, update `/app/manifests.yaml` to set `suspend: false`, and verify that `data-backup-cron` resumes creating scheduled backup jobs.
+
+---
+
+## Symptoms Observed
+- `kubectl get cronjob data-backup-cron` shows `SUSPEND: true` and `LAST SCHEDULE: <none>`.
+- `kubectl get jobs` displays `No resources found in default namespace.`
+
+---
+
+## Task Objectives
+1. Inspect the CronJob resource status:
+   ```bash
+   kubectl get cronjob data-backup-cron
+   kubectl get cronjob data-backup-cron -o yaml
+   ```
+2. Identify that `.spec.suspend` is explicitly set to `true`.
+3. Update `/app/manifests.yaml` (or edit the CronJob directly):
+   Set `suspend: false` (or remove the `suspend` field):
+   ```yaml
+   spec:
+     schedule: "* * * * *"
+     concurrencyPolicy: Forbid
+     suspend: false
+   ```
+4. Re-apply the manifest (`kubectl apply -f /app/manifests.yaml`) and verify that `data-backup-cron` updates `LAST SCHEDULE` and triggers execution.
+
+---
+
+## Troubleshooting Guide & Common Production Causes for CronJob Scheduling Failures
+
+### 1. CronJob Controller Execution Rules
+- **`suspend: true`**: Temporarily halts all future scheduled executions without deleting the CronJob resource. Existing running jobs continue to run until completion.
+- **`concurrencyPolicy`**:
+  - `Allow` (default): Permits concurrent job executions.
+  - `Forbid`: Disallows concurrent executions. If a previous job is still running when the next schedule triggers, the new job is skipped.
+  - `Replace`: Cancels the currently running job and replaces it with a new job.
+- **`startingDeadlineSeconds`**: Specifies the deadline in seconds for starting a job if it missed its scheduled time. If missed schedule count > 100, CronJob stops scheduling jobs entirely.
+
+---
+
+### 2. Diagnostic Steps
+
+1. **Check Suspend & Concurrency Policy**:
+   ```bash
+   kubectl get cronjob data-backup-cron -o jsonpath='{.spec.suspend}'
+   ```
+
+2. **Inspect CronJob Event Log History**:
+   ```bash
+   kubectl describe cronjob data-backup-cron
+   ```
+
+3. **Check for Stuck Running Jobs**:
+   If `concurrencyPolicy: Forbid`, check if an old job is stuck in `Running` state:
+   ```bash
+   kubectl get jobs
+   ```
+
+---
+
+### 3. Top Production Causes for CronJob Execution Failures
+
+| Cause Category | Typical Symptom | Common Root Cause & Solution |
+| :--- | :--- | :--- |
+| **Suspended CronJob (`suspend: true`)** | `SUSPEND: true`, no jobs created | CronJob explicitly paused. Set `suspend: false` to resume automatic schedule execution. |
+| **Concurrency Policy Blocking (`Forbid`)** | `Saw completed job ... skipping schedule` | Previous job run is stuck or taking longer than schedule interval. Increase schedule interval or fix stuck job. |
+| **Missed Starting Deadline (`startingDeadlineSeconds`)** | `Cannot determine if job needs to be started` | Cluster downtime or controller restart missed > 100 schedule intervals. Re-create CronJob or increase deadline seconds. |
+| **Invalid Cron Syntax** | `CronJob ... invalid schedule` | Invalid crontab syntax (e.g. non-existent calendar date `0 0 31 2 *`). Correct cron expression. |
+
+---
+
+## Verification & Expected Outcome
+Run `verify.sh` or inspect CronJob:
+```bash
+kubectl get cronjob data-backup-cron
+```
+Expected Output:
+```
+NAME               SCHEDULE    SUSPEND   ACTIVE   LAST SCHEDULE   AGE
+data-backup-cron   * * * * *   false     0        10s             5m
+```
+`verify.sh` exits with return code `0`.

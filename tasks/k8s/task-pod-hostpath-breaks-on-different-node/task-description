@@ -1,0 +1,81 @@
+# Kubernetes Lab: Debugging HostPath Volume Node Dependency
+
+## Background Scenario
+A log processing service (`log-processor`) was configured to mount local storage using a `hostPath` volume pointing to `/var/log/processor-data` on the host node. 
+
+While this configuration worked initially when testing on a specific single-node development cluster, deploying it across a multi-node cluster caused severe issues:
+- When pods are evicted or rescheduled onto different worker nodes during cluster maintenance, data is missing or inaccessible because the host path is node-bound.
+- In multi-replica deployments, pods running on different nodes write to separate local filesystems instead of shared or container-isolated storage.
+- If worker nodes lack pre-created permissions on host paths, pods may fail to initialize or encounter permission denied errors.
+
+Your objective as a DevOps / Kubernetes Engineer is to refactor the volume configuration of `log-processor` to replace the node-bound `hostPath` volume with an `emptyDir` volume (or dynamic `PersistentVolumeClaim`), making the pod fully portable across any node in the cluster.
+
+---
+
+## Symptoms Observed
+- `kubectl get deployment log-processor` shows pod dependence on host filesystem paths:
+  ```yaml
+  volumes:
+  - name: app-storage
+    hostPath:
+      path: /var/log/processor-data
+  ```
+- Rescheduling the pod to another node breaks data continuity, state tracking, or causes file access errors if the node path is unavailable.
+
+---
+
+## Task Objectives
+1. Inspect the Deployment volume configuration:
+   ```bash
+   kubectl describe deployment log-processor
+   kubectl get deployment log-processor -o yaml
+   ```
+2. Identify that `app-storage` volume uses `hostPath`.
+3. Update `/app/manifests.yaml` (or edit the deployment) to replace `hostPath` with `emptyDir`:
+   ```yaml
+   spec:
+     template:
+       spec:
+         volumes:
+         - name: app-storage
+           emptyDir: {}
+   ```
+4. Re-apply the manifest (`kubectl apply -f /app/manifests.yaml`) and verify that the pod reaches `1/1 Running` (`READY 1/1`) without node-path binding.
+
+---
+
+## Troubleshooting Guide & Common Production Causes for HostPath Anti-Patterns
+
+### 1. Why `hostPath` is an Anti-Pattern in Production Clusters
+- **Node-Binding**: `hostPath` binds container storage directly to a single worker node's local filesystem. If the Pod moves to a different node, previously written data remains on the old node.
+- **Security Risks**: Gives containers direct access to host host OS directories (`/var`, `/etc`, `/proc`), exposing potential root privileges / node-compromise vectors.
+- **Permission Conflicts**: Host file ownership (UID/GID) may not match the container runtime user, causing access failures.
+
+---
+
+### 2. Recommended Alternatives
+- **Ephemeral Node Scratch Space**: Use `emptyDir: {}`. Storage lasts for the lifecycle of the Pod and works identically on any node.
+- **Persistent Data**: Use `PersistentVolumeClaim` (PVC) backed by network storage (CSI drivers like EBS, Longhorn, NFS, Ceph).
+- **Configuration Files**: Use `ConfigMap` or `Secret` volume mounts.
+
+---
+
+### 3. Top Production Causes for HostPath Failures
+
+| Cause Category | Typical Symptom | Common Root Cause & Solution |
+| :--- | :--- | :--- |
+| **Node Rescheduling Data Loss** | Data missing after node drain / pod reschedule | `hostPath` ties volume to node local disk. Migration to new node loses access to old path. Use PVC or `emptyDir`. |
+| **Directory Creation Permission Error** | `CreateContainerConfigError` / `Permission Denied` | Host node path owned by `root` with `0755` permissions; unprivileged container user cannot write. |
+| **Multi-Replica Inconsistency** | Replicas see different data | Multiple pods on different nodes read/write isolated local node paths instead of shared volume. Use ReadWriteMany PVC. |
+| **Host Disk Exhaustion** | Worker node `DiskPressure` taint | Uncapped container logs or files written to `hostPath` fill host root partition. |
+
+---
+
+## Verification & Expected Outcome
+Run `verify.sh` or inspect deployment volumes:
+```bash
+kubectl get deployment log-processor -o jsonpath='{.spec.template.spec.volumes}'
+```
+Expected Output:
+`hostPath` volume is removed and replaced with `emptyDir` (or PVC), and the deployment is `1/1 READY`.
+`verify.sh` exits with return code `0`.

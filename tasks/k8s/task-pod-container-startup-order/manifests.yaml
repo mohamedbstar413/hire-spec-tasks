@@ -1,0 +1,44 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: app-deployment
+  namespace: default
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: multi-container-app
+  template:
+    metadata:
+      labels:
+        app: multi-container-app
+    spec:
+      volumes:
+      - name: shared-data
+        emptyDir: {}
+      containers:
+      - name: config-initializer
+        image: busybox:1.36
+        command: ['sh', '-c', 'echo "Generating configuration file..."; sleep 3; echo "{\"status\": \"configured\", \"port\": 8080}" > /shared-data/config.json; echo "Config generated successfully."']
+        volumeMounts:
+        - name: shared-data
+          mountPath: /shared-data
+      - name: web-app
+        image: python:3.9-slim
+        command: ["python3", "-c"]
+        args:
+        - |
+          import os, sys, time, json
+          config_file = "/shared-data/config.json"
+          print("Starting Web Application...", flush=True)
+          if not os.path.exists(config_file):
+              print(f"FATAL ERROR: Configuration file {config_file} does not exist! Preparation container must run before web-app.", file=sys.stderr, flush=True)
+              sys.exit(1)
+          with open(config_file) as f:
+              cfg = json.load(f)
+          print(f"Web application started successfully with config: {cfg}", flush=True)
+          while True:
+              time.sleep(3600)
+        volumeMounts:
+        - name: shared-data
+          mountPath: /shared-data

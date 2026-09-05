@@ -1,0 +1,107 @@
+# Kubernetes Lab: Debugging Deployment Stuck in Partial Rollout
+
+## Background Scenario
+During an automated CI/CD deployment, an updated manifest for `web-app-deployment` was applied to update the application from `v1` to `v2`. However, the deployment rollout has stalled mid-update. 
+
+Currently, 10 pods running the previous version (`v1`) remain active to serve traffic, while 2 new surge pods created for `v2` are stuck in an `ImagePullBackOff` state. As a result, the Kubernetes RollingUpdate controller has paused the rollout to prevent service downtime.
+
+Your objective as a DevOps / Kubernetes Engineer is to inspect the rollout status, identify why the new revision failed, recover the deployment by rolling back or updating to a valid image, and ensure all **10 replicas** complete rollout and reach `10/10 READY`.
+
+---
+
+## Symptoms Observed
+- `kubectl rollout status deployment web-app-deployment` displays:
+  ```
+  Waiting for deployment "web-app-deployment" rollout to finish: 2 out of 10 new replicas have been updated...
+  ```
+- `kubectl get rs` shows two ReplicaSets:
+  - Old ReplicaSet (`web-app-deployment-55d8f9977c`): 10 desired, 10 current, 10 ready.
+  - New ReplicaSet (`web-app-deployment-7b4478f99d`): 2 desired, 2 current, 0 ready.
+- `kubectl get pods -l app=web-app` shows 10 pods in `1/1 Running` and 2 new surge pods in `0/1 ImagePullBackOff`.
+
+---
+
+## Task Objectives
+1. Inspect the rollout status and active ReplicaSets:
+   ```bash
+   kubectl rollout status deployment web-app-deployment
+   kubectl get rs -l app=web-app
+   ```
+2. Retrieve pod details to identify the invalid image tag (`nginx:1.25.99-nonexistent`):
+   ```bash
+   kubectl describe pod -l version=v2
+   ```
+3. Fix the deployment image tag to a valid version (e.g. `nginx:1.25-alpine` or `nginx:1.26-alpine`) OR execute a rollout undo:
+   ```bash
+   kubectl rollout undo deployment web-app-deployment
+   ```
+   *(Or edit the deployment image tag in `/app/manifests.yaml` and re-apply with `kubectl apply -f /app/manifests.yaml`)*
+4. Verify that the deployment completes rollout and all 10 replicas reach `1/1 Running` (`READY 10/10`).
+
+---
+
+## Troubleshooting Guide & Common Production Causes for Stuck Rollouts
+
+### 1. Understanding Kubernetes RollingUpdate Mechanics
+When updating a Deployment with `RollingUpdate`:
+- `maxSurge` controls how many extra pods can be created above the desired replica count during rollout (e.g. `maxSurge: 2`).
+- `maxUnavailable` controls how many existing pods can be taken down during rollout (e.g. `maxUnavailable: 0`).
+- If new surge pods fail readiness checks or image pulling, Kubernetes **will not delete old pods** if `maxUnavailable: 0`, keeping the service running on old pods while the rollout stalls.
+
+---
+
+### 2. Diagnostic Steps
+
+1. **Check Rollout Progress & History**:
+   ```bash
+   kubectl rollout status deployment web-app-deployment
+   kubectl rollout history deployment web-app-deployment
+   ```
+
+2. **Inspect ReplicaSets**:
+   ```bash
+   kubectl get rs -l app=web-app -o wide
+   ```
+   *Identifies which ReplicaSet revision contains failing pods.*
+
+3. **Check Pod Events**:
+   ```bash
+   kubectl describe pod -l version=v2
+   ```
+   *Look at `Events:` section for `Failed to pull image "nginx:1.25.99-nonexistent": rpc error: code = NotFound`.*
+
+4. **Recover the Deployment**:
+   Option A: Roll back to previous revision:
+   ```bash
+   kubectl rollout undo deployment web-app-deployment
+   ```
+   Option B: Set image to a valid version:
+   ```bash
+   kubectl set image deployment/web-app-deployment web-container=nginx:1.25-alpine
+   ```
+
+---
+
+### 3. Top Production Causes for Stuck Rollouts
+
+| Cause Category | Typical Symptom | Common Root Cause & Solution |
+| :--- | :--- | :--- |
+| **Invalid Image Tag / Missing Artifact** | `ImagePullBackOff` / `ErrImagePull` | CI/CD pipeline generated non-existent tag or image wasn't pushed to container registry. |
+| **Failing Readiness Probes** | Pod stays `0/1 Running` | App code in v2 fails `/health` or DB migration hasn't completed. Kubernetes pauses rollout to prevent outage. |
+| **Namespace Resource Quota Limits** | `FailedCreate` event in ReplicaSet | `maxSurge` pods exceed namespace CPU/Memory limits. Increase quota or lower `maxSurge`. |
+| **Application Boot Crash** | `CrashLoopBackOff` | New application code crashes on startup due to missing environment variable or secret. |
+| **ConfigMap / Secret Versioning Error** | `CreateContainerConfigError` | New deployment revision references a Secret or ConfigMap key that does not exist in cluster. |
+
+---
+
+## Verification & Expected Outcome
+Run `verify.sh` or check cluster status:
+```bash
+kubectl get deployment web-app-deployment
+```
+Expected Output:
+```
+NAME                 READY   UP-TO-DATE   AVAILABLE   AGE
+web-app-deployment   10/10   10           10          5m
+```
+All 10 replicas must show `READY 10/10`, `UP-TO-DATE 10`, and status `Running` with no pods in `ImagePullBackOff` or `ErrImagePull`.

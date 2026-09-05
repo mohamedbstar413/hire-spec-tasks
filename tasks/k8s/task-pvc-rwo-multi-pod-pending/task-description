@@ -1,0 +1,109 @@
+# Kubernetes Lab: Debugging Multi-Pod Pending Status (PVC ReadWriteOnce Access Mode)
+
+## Background Scenario
+A web application deployment (`shared-app-deployment`) is scaled to 3 replicas. All pods are configured to share a persistent data volume by mounting a PersistentVolumeClaim named `app-data-pvc`.
+
+However, monitoring alerts show that only **1 pod** is running (`1/1 Running`), while the remaining **2 pods** are stuck in `Pending` / `ContainerCreating` status.
+
+Your objective as a DevOps / Kubernetes Engineer is to inspect the pod events, identify why 2 pods are unable to mount `app-data-pvc`, update the PVC access mode to permit multi-pod mounting, and ensure all **3 replicas** reach `1/1 Running` (`READY 3/3`).
+
+---
+
+## Symptoms Observed
+- `kubectl get pods -l app=shared-app` displays:
+  ```
+  NAME                                     READY   STATUS    RESTARTS   AGE
+  shared-app-deployment-647d8b5c94-pod01   1/1     Running   0          5m
+  shared-app-deployment-647d8b5c94-pod02   0/1     Pending   0          5m
+  shared-app-deployment-647d8b5c94-pod03   0/1     Pending   0          5m
+  ```
+- Running `kubectl describe pod <pending-pod-name>` displays:
+  ```
+  Warning  FailedAttachVolume  attachdetach-controller  Multi-Attach error for volume "pvc-..." Volume is already exclusively attached to one node and access mode is ReadWriteOnce.
+  ```
+
+---
+
+## Task Objectives
+1. Inspect the pending pod status and event logs:
+   ```bash
+   kubectl describe pod -l app=shared-app
+   ```
+2. Inspect the PersistentVolumeClaim `app-data-pvc`:
+   ```bash
+   kubectl get pvc app-data-pvc -o yaml
+   ```
+3. Identify that `app-data-pvc` is configured with `accessModes: [ReadWriteOnce]` (RWO), preventing multiple pods across nodes from mounting the same volume concurrently.
+4. Update `app-data-pvc` access mode to `ReadWriteMany` (RWX) in `/app/manifests.yaml` and re-apply:
+   ```bash
+   kubectl delete pvc app-data-pvc --force
+   kubectl apply -f /app/manifests.yaml
+   ```
+5. Verify that all 3 pods mount the volume successfully and reach `1/1 Running` (`READY 3/3`).
+
+---
+
+## Troubleshooting Guide & Common Production Causes for Volume Access Mode Errors
+
+### 1. Understanding Kubernetes PVC AccessModes
+- **`ReadWriteOnce` (RWO)**: The volume can be mounted as read-write by a **single node only**. If a Deployment with multiple replicas attempts to mount an RWO volume, pods scheduled on separate cluster nodes will fail with `Multi-Attach error`.
+- **`ReadWriteMany` (RWX)**: The volume can be mounted as read-write by **many nodes simultaneously** (requires shared storage provisioner like NFS, Ceph, EFS, or GlusterFS).
+- **`ReadOnlyMany` (ROX)**: The volume can be mounted read-only by many nodes simultaneously.
+- **`ReadWriteOncePod` (RWOP)**: The volume can be mounted as read-write by a single Pod only across the entire cluster.
+
+---
+
+### 2. Diagnostic Steps
+
+1. **Check Pod Events**:
+   ```bash
+   kubectl describe pod -l app=shared-app
+   ```
+   *Look for `FailedAttachVolume` / `Multi-Attach error` events.*
+
+2. **Inspect PVC Access Mode**:
+   ```bash
+   kubectl get pvc app-data-pvc -o jsonpath='{.spec.accessModes}'
+   ```
+
+3. **Update PVC AccessMode to ReadWriteMany**:
+   Update `app-data-pvc` in manifest:
+   ```yaml
+   apiVersion: v1
+   kind: PersistentVolumeClaim
+   metadata:
+     name: app-data-pvc
+     namespace: default
+   spec:
+     accessModes:
+       - ReadWriteMany
+     resources:
+       requests:
+         storage: 1Gi
+   ```
+
+---
+
+### 3. Top Production Causes for PVC Mount & Pending Pod Failures
+
+| Cause Category | Typical Symptom | Common Root Cause & Solution |
+| :--- | :--- | :--- |
+| **`ReadWriteOnce` Multi-Node Conflict** | `Multi-Attach error` / `Pending` | Multi-pod deployment mounts single RWO PVC across multiple nodes. Change accessMode to `ReadWriteMany` or use StatefulSet `volumeClaimTemplates`. |
+| **Unbound PVC / Missing StorageClass** | `pvc-name not found` / `Pending` | PVC status is `Pending` because requested `storageClassName` does not exist or has no available PVs. |
+| **Node Affinity / AZ Topology Lock** | `node(s) had volume node-affinity conflict` | Cloud PV (e.g. AWS EBS) provisioned in `us-east-1a`, preventing pods scheduled on nodes in `us-east-1b` from attaching volume. |
+| **Local HostPath Driver Limitation** | `Volume mount failed` | Local hostPath volume exists on Node A only; pods scheduled on Node B cannot mount Node A local path. |
+| **Storage Quota / Disk Full** | `Insufficient storage` | Requested PVC size exceeds namespace ResourceQuota or storage array capacity. |
+
+---
+
+## Verification & Expected Outcome
+Run `verify.sh` or inspect deployment:
+```bash
+kubectl get deployment shared-app-deployment
+```
+Expected Output:
+```
+NAME                    READY   UP-TO-DATE   AVAILABLE   AGE
+shared-app-deployment   3/3     3            3           5m
+```
+All 3 pods must show `READY 1/1` and status `Running` with zero volume attachment errors.

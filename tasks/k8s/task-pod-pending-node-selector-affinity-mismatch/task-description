@@ -1,0 +1,103 @@
+# Kubernetes Lab: Debugging Pod Pending Due to Node Selector / Affinity Mismatch
+
+## Background Scenario
+A data analytics deployment (`analytics-worker`) was submitted to the cluster. However, the pod is stuck in `Pending` status and cannot be scheduled onto any node.
+
+When inspecting the pending pod events, `kubectl describe` reports `0/1 nodes are available: 1 node(s) didn't match Pod's node affinity/selector`.
+
+Your objective as a DevOps / Kubernetes Engineer is to inspect the pod scheduling events and node labels, resolve the node selector mismatch, and ensure the `analytics-worker` pod is scheduled and reaches `1/1 Running` (`READY 1/1`).
+
+---
+
+## Symptoms Observed
+- `kubectl get pods -l app=analytics-worker` displays:
+  ```
+  NAME                                READY   STATUS    RESTARTS   AGE
+  analytics-worker-55d8f9977c-pod01   0/1     Pending   0          3m
+  ```
+- Running `kubectl describe pod -l app=analytics-worker` displays:
+  ```
+  Warning  FailedScheduling  default-scheduler  0/1 nodes are available: 1 node(s) didn't match Pod's node affinity/selector.
+  ```
+
+---
+
+## Task Objectives
+1. Inspect the pending pod scheduling events:
+   ```bash
+   kubectl describe pod -l app=analytics-worker
+   ```
+2. Inspect cluster nodes and their active labels:
+   ```bash
+   kubectl get nodes --show-labels
+   ```
+3. Identify that `analytics-worker` specifies `nodeSelector: { disktype: ssd, gpu: "true" }` which matches zero nodes in the cluster.
+4. Resolve the scheduling block by doing one of the following:
+   - Remove or correct `nodeSelector` in `/app/manifests.yaml` (or edit deployment) and re-apply (`kubectl apply -f /app/manifests.yaml`).
+   - OR label the cluster node to match the required selector (`kubectl label node <node-name> disktype=ssd gpu=true`).
+5. Verify that the pod is scheduled and reaches `1/1 Running` (`READY 1/1`).
+
+---
+
+## Troubleshooting Guide & Common Production Causes for Node Selection Failures
+
+### 1. How Kubernetes Scheduler Evaluates Node Selection
+- **`nodeSelector` (Hard Constraint)**: `nodeSelector` is the simplest form of node selection constraint. The Kubernetes scheduler will **only** place a Pod on a Node if the Node's labels match all key-value pairs specified in `spec.nodeSelector`.
+- **Unmatched Predicate**: If no node carries all specified labels, the `Pod's node affinity/selector` scheduling predicate returns false for 100% of nodes, leaving the Pod permanently stuck in `Pending`.
+
+---
+
+### 2. Diagnostic Steps
+
+1. **Check Pending Pod Event Messages**:
+   ```bash
+   kubectl describe pod <pending-pod-name>
+   ```
+   *Look for `FailedScheduling` -> `node(s) didn't match Pod's node affinity/selector`.*
+
+2. **Inspect Existing Node Labels**:
+   ```bash
+   kubectl get nodes --show-labels
+   ```
+
+3. **Update Manifest or Label Node**:
+   Option A: Remove invalid `nodeSelector` from Deployment spec:
+   ```yaml
+   spec:
+     template:
+       spec:
+         # Remove or fix nodeSelector
+         containers:
+         - name: worker
+           image: python:3.9-slim
+   ```
+   Option B: Label cluster node to satisfy selector:
+   ```bash
+   kubectl label node <node-name> disktype=ssd gpu=true
+   ```
+
+---
+
+### 3. Top Production Causes for Node Selector / Affinity Failures
+
+| Cause Category | Typical Error Message | Common Root Cause & Solution |
+| :--- | :--- | :--- |
+| **Non-Existent Node Label** | `node(s) didn't match Pod's node affinity/selector` | Pod spec requires custom node label (e.g. `disktype=ssd` / `gpu=true`) not present on any node. Label node or update pod spec. |
+| **Typo in Label Key or Value** | `node(s) didn't match Pod's node affinity/selector` | Pod spec requires `disk-type: ssd` while node is labeled `disktype: ssd`. Align label spelling. |
+| **Hard `nodeAffinity` Mismatch** | `node(s) didn't match Pod's node affinity/selector` | `requiredDuringSchedulingIgnoredDuringExecution` rule requires AZ zone or hardware label that does not exist in cluster. |
+| **Unmatched Node Taints** | `node(s) had untolerated taint` | Node has taint (e.g. `node-role.kubernetes.io/master:NoSchedule`), but Pod spec is missing matching `tolerations`. |
+| **Architecture Mismatch** | `node(s) didn't match Pod's node affinity/selector` | Pod specifies `kubernetes.io/arch: arm64` while cluster nodes run `amd64`. |
+
+---
+
+## Verification & Expected Outcome
+Run `verify.sh` or inspect deployment:
+```bash
+kubectl get deployment analytics-worker
+```
+Expected Output:
+```
+NAME               READY   UP-TO-DATE   AVAILABLE   AGE
+analytics-worker   1/1     1            1           5m
+```
+The pod `analytics-worker-*` must be scheduled and reach `READY 1/1` in `Running` state with zero pending pods.

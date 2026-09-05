@@ -1,0 +1,107 @@
+# Kubernetes Lab: Debugging PersistentVolumeClaim Stuck in Pending State
+
+## Background Scenario
+A database application (`db-app`) requires persistent storage and was configured to mount a PersistentVolumeClaim named `data-pvc`. However, `data-pvc` remains stuck in `Pending` state, which in turn prevents the database pod from being scheduled onto a cluster node.
+
+Your objective as a DevOps / Kubernetes Engineer is to inspect the PVC status and cluster storage configuration, identify why `data-pvc` fails to bind, update the PVC manifest to reference a valid StorageClass, and ensure the database pod reaches `1/1 Running` (`READY 1/1`).
+
+---
+
+## Symptoms Observed
+- `kubectl get pvc data-pvc` displays:
+  ```
+  NAME       STATUS    VOLUME   CAPACITY   ACCESS MODES   STORAGECLASS       AGE
+  data-pvc   Pending                                      fast-ssd-storage   5m
+  ```
+- Running `kubectl describe pvc data-pvc` displays:
+  ```
+  Warning  ProvisioningFailed  storageclass.storage.k8s.io "fast-ssd-storage" not found
+  ```
+- `kubectl get pods -l app=db-app` shows pod `STATUS: Pending` (waiting for volume binding).
+
+---
+
+## Task Objectives
+1. Inspect the PVC status and details:
+   ```bash
+   kubectl get pvc data-pvc
+   kubectl describe pvc data-pvc
+   ```
+2. List available StorageClasses in the cluster:
+   ```bash
+   kubectl get storageclass
+   ```
+3. Identify that `data-pvc` references a non-existent StorageClass (`fast-ssd-storage`).
+4. Update `data-pvc` in `/app/manifests.yaml` to reference the valid StorageClass (`standard`), delete the old pending PVC, and re-apply:
+   ```bash
+   kubectl delete pvc data-pvc --force
+   kubectl apply -f /app/manifests.yaml
+   ```
+5. Verify `data-pvc` transitions to `Bound` and `db-app` pod reaches `1/1 Running` (`READY 1/1`).
+
+---
+
+## Troubleshooting Guide & Common Production Causes for PVC Pending Status
+
+### 1. How Kubernetes PVC Binding Works
+- **Dynamic Provisioning**: When a PVC requests `storageClassName: <name>`, Kubernetes calls the StorageClass provisioner plugin to automatically create a matching PersistentVolume (PV).
+- **Static Provisioning**: If `storageClassName` matches a pre-created PV, Kubernetes binds the PVC to that specific PV based on capacity, accessModes, and labels.
+- **Missing StorageClass**: If `storageClassName` does not exist in the cluster, dynamic provisioning fails immediately and the PVC remains stuck in `Pending`.
+
+---
+
+### 2. Diagnostic Steps
+
+1. **Check PVC Status & Events**:
+   ```bash
+   kubectl describe pvc data-pvc
+   ```
+   *Look for `storageclass.storage.k8s.io "... " not found` or `waiting for a volume to be created`.*
+
+2. **List Cluster StorageClasses**:
+   ```bash
+   kubectl get sc
+   ```
+
+3. **Update PVC Manifest**:
+   Update `storageClassName` to `standard`:
+   ```yaml
+   apiVersion: v1
+   kind: PersistentVolumeClaim
+   metadata:
+     name: data-pvc
+     namespace: default
+   spec:
+     storageClassName: standard
+     accessModes:
+       - ReadWriteOnce
+     resources:
+       requests:
+         storage: 2Gi
+   ```
+
+---
+
+### 3. Top Production Causes for PVC `Pending` Status
+
+| Cause Category | Typical Symptom | Common Root Cause & Solution |
+| :--- | :--- | :--- |
+| **Non-Existent / Misspelled StorageClass** | `ProvisioningFailed: storageclass not found` | PVC references StorageClass name that does not exist in cluster. Correct name or deploy storage provisioner. |
+| **Storage Capacity Request Exceeds Available PV** | `matching PVs not found` | PVC requests `50Gi`, but available static PVs only have `5Gi` capacity. Lower PVC request or provision larger PV. |
+| **`WaitForFirstConsumer` Binding Mode** | PVC remains `Pending` until Pod schedules | Normal behavior for local storage. PVC will bind automatically once a Pod mounting it gets scheduled on a node. |
+| **AccessMode Mismatch** | `no volume matching criteria` | PVC requests `ReadWriteMany`, but static PV only supports `ReadWriteOnce`. Align accessModes between PV and PVC. |
+| **CSI Storage Driver / Provisioner Crash** | `driver not found` / `Timeout` | CSI driver pod (e.g. AWS EBS CSI, Longhorn, Ceph) crashed or lacks cloud provider IAM permissions to provision volumes. |
+
+---
+
+## Verification & Expected Outcome
+Run `verify.sh` or inspect PVC:
+```bash
+kubectl get pvc data-pvc
+```
+Expected Output:
+```
+NAME       STATUS   VOLUME             CAPACITY   ACCESS MODES   STORAGECLASS   AGE
+data-pvc   Bound    local-pv-storage   5Gi        RWO            standard       5m
+```
+The PVC must show `STATUS: Bound` and the `db-app` pod must reach `1/1 Running`.

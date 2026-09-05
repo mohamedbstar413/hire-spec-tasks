@@ -1,0 +1,114 @@
+# Kubernetes Lab: Debugging Pod Pending Due to Taints and Tolerations Mismatch
+
+## Background Scenario
+A dedicated background worker deployment (`dedicated-worker`) was submitted to the cluster. However, the pod is stuck in `Pending` status and cannot be scheduled onto any node.
+
+When inspecting the pending pod scheduling events, `kubectl describe` reports `0/1 nodes are available: 1 node(s) had untolerated taint {dedicated: gpu}`.
+
+Your objective as a DevOps / Kubernetes Engineer is to inspect the pod scheduling events and node taints, resolve the taints/tolerations mismatch, and ensure the `dedicated-worker` pod is scheduled and reaches `1/1 Running` (`READY 1/1`).
+
+---
+
+## Symptoms Observed
+- `kubectl get pods -l app=dedicated-worker` displays:
+  ```
+  NAME                                READY   STATUS    RESTARTS   AGE
+  dedicated-worker-55d8f9977c-pod01   0/1     Pending   0          3m
+  ```
+- Running `kubectl describe pod -l app=dedicated-worker` displays:
+  ```
+  Warning  FailedScheduling  default-scheduler  0/1 nodes are available: 1 node(s) had untolerated taint {dedicated: gpu}.
+  ```
+
+---
+
+## Task Objectives
+1. Inspect the pending pod scheduling events:
+   ```bash
+   kubectl describe pod -l app=dedicated-worker
+   ```
+2. Inspect node taints across the cluster:
+   ```bash
+   kubectl describe nodes
+   ```
+3. Identify that cluster nodes carry the taint `dedicated=gpu:NoSchedule`, which repels pods lacking matching tolerations.
+4. Resolve the scheduling block by doing one of the following:
+   - Add a matching `tolerations` block to `/app/manifests.yaml` (or edit deployment) and re-apply (`kubectl apply -f /app/manifests.yaml`):
+     ```yaml
+     tolerations:
+     - key: "dedicated"
+       operator: "Equal"
+       value: "gpu"
+       effect: "NoSchedule"
+     ```
+   - OR remove the taint from cluster nodes using `kubectl taint nodes --all dedicated:NoSchedule-`.
+5. Verify that the pod is scheduled and reaches `1/1 Running` (`READY 1/1`).
+
+---
+
+## Troubleshooting Guide & Common Production Causes for Taints and Tolerations Failures
+
+### 1. How Kubernetes Taints and Tolerations Work
+- **Taints Repel Pods**: Taints are applied to Nodes (`kubectl taint nodes <node> key=value:Effect`). A tainted node repels all pods that do not explicitly tolerate the taint.
+- **Tolerations Allow Scheduling**: Tolerations are applied to Pod specs under `spec.tolerations`. A toleration allows (but does not require) a pod to schedule onto nodes with matching taints.
+- **Taint Effects**:
+  - `NoSchedule`: Kubernetes will not schedule the pod onto the node unless it has a matching toleration.
+  - `PreferNoSchedule`: Kubernetes will try to avoid scheduling the pod onto the node, but can if no other nodes are available.
+  - `NoExecute`: Kubernetes will evict existing pods from the node if they do not tolerate the taint.
+
+---
+
+### 2. Diagnostic Steps
+
+1. **Check Pending Pod Event Messages**:
+   ```bash
+   kubectl describe pod <pending-pod-name>
+   ```
+   *Look for `FailedScheduling` -> `1 node(s) had untolerated taint`.*
+
+2. **Inspect Existing Node Taints**:
+   ```bash
+   kubectl describe nodes | grep -i taints
+   ```
+
+3. **Update Manifest to Include Tolerations**:
+   Add `tolerations` under `spec.template.spec`:
+   ```yaml
+   spec:
+     template:
+       spec:
+         tolerations:
+         - key: "dedicated"
+           operator: "Equal"
+           value: "gpu"
+           effect: "NoSchedule"
+         containers:
+         - name: worker
+           image: python:3.9-slim
+   ```
+
+---
+
+### 3. Top Production Causes for Taints and Tolerations Failures
+
+| Cause Category | Typical Error Message | Common Root Cause & Solution |
+| :--- | :--- | :--- |
+| **Untolerated Node Taint** | `1 node(s) had untolerated taint` | Node carries custom taint (e.g. `dedicated=gpu:NoSchedule`), but Pod spec omits `tolerations`. Add toleration. |
+| **Toleration Key / Value Typo** | `1 node(s) had untolerated taint` | Pod specifies `key: "dedcated"` (typo) or `value: "GPU"` (case mismatch). Correct key/value spelling. |
+| **Toleration Effect Mismatch** | `1 node(s) had untolerated taint` | Pod specifies `effect: "PreferNoSchedule"` while node enforces `NoSchedule`. Align effect. |
+| **Control Plane Master Node Taint** | `1 node(s) had untolerated taint` | Pod accidentally scheduled on control plane node carrying `node-role.kubernetes.io/control-plane:NoSchedule`. |
+| **Node `NoExecute` Eviction** | Pod evicted / `Pending` | Node tainted with `NoExecute` due to disk pressure or node unreachability, evicting pods without tolerations. |
+
+---
+
+## Verification & Expected Outcome
+Run `verify.sh` or inspect deployment:
+```bash
+kubectl get deployment dedicated-worker
+```
+Expected Output:
+```
+NAME               READY   UP-TO-DATE   AVAILABLE   AGE
+dedicated-worker   1/1     1            1           5m
+```
+The pod `dedicated-worker-*` must be scheduled and reach `READY 1/1` in `Running` state with zero pending pods.

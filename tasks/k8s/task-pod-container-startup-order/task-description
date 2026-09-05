@@ -1,0 +1,95 @@
+# Kubernetes Lab: Enforcing Container Startup Order in a Pod
+
+## Background Scenario
+A web application deployment (`app-deployment`) consists of two containers:
+1. `config-initializer`: Generates a required JSON configuration file on a shared volume (`emptyDir`).
+2. `web-app`: Loads and parses the generated configuration file on boot to initialize the web application.
+
+However, after deploying the specification, `web-app` continuously crashes on startup and enters `CrashLoopBackOff`. Inspection reveals that both containers were placed under `spec.template.spec.containers`, causing Kubernetes to start them simultaneously in parallel. Because `web-app` starts before `config-initializer` completes writing the file, `web-app` fails immediately.
+
+Your objective as a DevOps / Kubernetes Engineer is to restructure the Deployment manifest to guarantee that `config-initializer` executes and completes **before** `web-app` starts up, bringing the deployment to `1/1 Running` state.
+
+---
+
+## Symptoms Observed
+- `kubectl get pods -l app=multi-container-app` displays:
+  ```
+  NAME                              READY   STATUS             RESTARTS   AGE
+  app-deployment-647d8b5c94-pod01   1/2     CrashLoopBackOff   3          2m
+  ```
+- Running `kubectl logs -l app=multi-container-app -c web-app` displays:
+  `FATAL ERROR: Configuration file /shared-data/config.json does not exist! Preparation container must run before web-app.`
+
+---
+
+## Task Objectives
+1. Inspect the running pod status and retrieve logs for container `web-app`:
+   ```bash
+   kubectl logs -l app=multi-container-app -c web-app
+   ```
+2. Identify why parallel startup causes `web-app` to crash.
+3. Update the deployment manifest in `/app/manifests.yaml` or via `kubectl edit deployment app-deployment` to move `config-initializer` into `spec.template.spec.initContainers`.
+4. Re-apply the manifest (`kubectl apply -f /app/manifests.yaml`) and verify that `config-initializer` completes as an init container, allowing `web-app` to start successfully in `1/1 Running` (`READY 1/1`).
+
+---
+
+## Troubleshooting Guide & Common Production Causes for Container Startup Order Issues
+
+### 1. How Kubernetes Starts Containers inside a Pod
+- **`spec.containers` (Parallel Startup)**: All containers listed in `containers:` are launched in parallel by `kubelet`. Kubernetes does **not** guarantee any order of execution among standard app containers.
+- **`spec.initContainers` (Sequential Order)**: `initContainers` are executed sequentially in order of definition **before** any main app containers are created. Each init container must complete cleanly (`exit 0`) before the next container is launched.
+
+---
+
+### 2. Diagnostic Steps
+
+1. **Check Multi-Container Pod Overview**:
+   ```bash
+   kubectl get pods -l app=multi-container-app -o wide
+   ```
+2. **Inspect Specific Container Logs**:
+   ```bash
+   kubectl logs -l app=multi-container-app -c web-app
+   kubectl logs -l app=multi-container-app -c config-initializer
+   ```
+3. **Move Preparation Logic to `initContainers`**:
+   Update the Deployment spec structure:
+   ```yaml
+   spec:
+     template:
+       spec:
+         initContainers:
+         - name: config-initializer
+           image: busybox:1.36
+           # ... initialization command ...
+         containers:
+         - name: web-app
+           image: python:3.9-slim
+           # ... main application command ...
+   ```
+
+---
+
+### 3. Top Production Causes for Multi-Container Startup Order Failures
+
+| Cause Category | Typical Symptom | Common Root Cause & Solution |
+| :--- | :--- | :--- |
+| **Parallel Execution in `containers:`** | `File Not Found` / `CrashLoopBackOff` on boot | Helper container generating secrets, assets, or configs placed in `containers:` instead of `initContainers:`. |
+| **Database Schema Migration Race Condition** | `Table missing` / `Database Error` | Migration container runs in parallel with app container. Move migration runner into `initContainers:`. |
+| **Secret Downloader / Vault Sidecar Timing** | `Unauthorized` / `401 Token Missing` | Vault agent sidecar container fetching credentials hasn't retrieved tokens before main app container starts. |
+| **Service Mesh Sidecar Readiness (Envoy/Istio)** | `Connection refused` on boot | Application attempts outbound network requests before proxy sidecar proxy is fully initialized (use K8s Native Sidecars `restartPolicy: Always` in K8s 1.28+). |
+| **Missing Retry Loop in App Code** | Application crash on immediate socket error | Application expects external services ready at microsecond zero. Implement connection retry backoff in application code. |
+
+---
+
+## Verification & Expected Outcome
+Run `verify.sh` or check cluster status:
+```bash
+kubectl get deployment app-deployment
+```
+Expected Output:
+```
+NAME             READY   UP-TO-DATE   AVAILABLE   AGE
+app-deployment   1/1     1            1           5m
+```
+The pod `app-deployment-*` must report `READY 1/1`, `initContainers` completed, and status `Running` with `0` active restarts on `web-app`.

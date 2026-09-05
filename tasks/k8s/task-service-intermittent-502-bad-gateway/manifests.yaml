@@ -1,0 +1,87 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: web-api-service
+  namespace: default
+spec:
+  type: ClusterIP
+  selector:
+    app: web-api
+  ports:
+  - port: 80
+    targetPort: 8080
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: web-api
+  namespace: default
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: web-api
+      tier: frontend
+  template:
+    metadata:
+      labels:
+        app: web-api
+        tier: frontend
+    spec:
+      containers:
+      - name: web-app
+        image: python:3.9-slim
+        command: ["python3", "-c"]
+        args:
+        - |
+          import http.server, socketserver
+          class Handler(http.server.SimpleHTTPRequestHandler):
+              def do_GET(self):
+                  self.send_response(200)
+                  self.send_header("Content-type", "text/plain")
+                  self.end_headers()
+                  self.wfile.write(b"200 OK - Healthy Web API Node\n")
+          with socketserver.TCPServer(("", 8080), Handler) as httpd:
+              httpd.serve_forever()
+        ports:
+        - containerPort: 8080
+        readinessProbe:
+          tcpSocket:
+            port: 8080
+          initialDelaySeconds: 1
+          periodSeconds: 2
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: web-api-broken-canary
+  namespace: default
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: web-api
+      tier: broken-canary
+  template:
+    metadata:
+      labels:
+        app: web-api
+        tier: broken-canary
+    spec:
+      containers:
+      - name: broken-app
+        image: python:3.9-slim
+        command: ["python3", "-c"]
+        args:
+        - |
+          import http.server, socketserver
+          class Handler(http.server.SimpleHTTPRequestHandler):
+              def do_GET(self):
+                  self.send_response(502)
+                  self.send_header("Content-type", "text/plain")
+                  self.end_headers()
+                  self.wfile.write(b"502 Bad Gateway - Internal Upstream Error\n")
+          with socketserver.TCPServer(("", 8080), Handler) as httpd:
+              httpd.serve_forever()
+        ports:
+        - containerPort: 8080

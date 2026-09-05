@@ -1,0 +1,43 @@
+#!/bin/bash
+set -e
+
+echo "Deploying Kubernetes environment for StatefulSet PVC Retention Policy task..."
+
+# Deploy StatefulSet stateful-app with volumeClaimTemplates but without persistentVolumeClaimRetentionPolicy (defaults to Retain)
+cat << 'EOF' | kubectl apply -f -
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: stateful-app
+  namespace: default
+spec:
+  serviceName: "stateful-service"
+  replicas: 2
+  selector:
+    matchLabels:
+      app: stateful-app
+  template:
+    metadata:
+      labels:
+        app: stateful-app
+    spec:
+      containers:
+      - name: data-container
+        image: nginx:1.25-alpine
+        ports:
+        - containerPort: 80
+          name: web
+        volumeMounts:
+        - name: data-store
+          mountPath: /usr/share/nginx/html
+  volumeClaimTemplates:
+  - metadata:
+      name: data-store
+    spec:
+      accessModes: [ "ReadWriteOnce" ]
+      resources:
+        requests:
+          storage: 100Mi
+EOF
+
+echo "Setup completed: StatefulSet stateful-app created with volumeClaimTemplates defaulting to Retain."

@@ -1,0 +1,110 @@
+# Kubernetes Lab: Debugging HPA Not Scaling (`<unknown>` Target Metrics)
+
+## Background Scenario
+A HorizontalPodAutoscaler (`web-app-hpa`) was deployed to automatically scale a web application (`web-app`) between 1 and 10 replicas based on CPU utilization (`target: 80%`).
+
+However, monitoring alerts indicate that HPA is not scaling the application, and running `kubectl get hpa` shows the target metric is stuck at `<unknown>/80%`.
+
+Your objective as a DevOps / Kubernetes Engineer is to inspect the HPA events and Deployment container specification, identify why HPA fails to calculate CPU utilization metrics, fix the container resource requests, and ensure HPA target metrics become healthy.
+
+---
+
+## Symptoms Observed
+- `kubectl get hpa` displays:
+  ```
+  NAME          REFERENCE            TARGETS         MINPODS   MAXPODS   REPLICAS   AGE
+  web-app-hpa   Deployment/web-app   <unknown>/80%   1         10        1          3m
+  ```
+- Running `kubectl describe hpa web-app-hpa` displays:
+  ```
+  Warning  FailedGetResourceMetric  ... missing request for cpu in container web-container of Pod web-app-...
+  ```
+
+---
+
+## Task Objectives
+1. Inspect the HPA status and event log:
+   ```bash
+   kubectl get hpa
+   kubectl describe hpa web-app-hpa
+   ```
+2. Inspect the Deployment container specification:
+   ```bash
+   kubectl get deployment web-app -o yaml
+   ```
+3. Identify that container `web-container` lacks a `resources.requests.cpu` definition, which prevents HPA from calculating percentage-based CPU utilization.
+4. Update `/app/manifests.yaml` (or edit deployment) to specify container CPU requests:
+   ```yaml
+   resources:
+     requests:
+       cpu: "100m"
+       memory: "128Mi"
+     limits:
+       cpu: "500m"
+       memory: "256Mi"
+   ```
+5. Re-apply the manifest (`kubectl apply -f /app/manifests.yaml`) and verify that HPA calculates valid CPU metrics (e.g. `0%/80%`) and HPA status becomes healthy.
+
+---
+
+## Troubleshooting Guide & Common Production Causes for HPA Scaling Failures
+
+### 1. How HPA Calculates Percentage Utilization
+- **Formula**: HPA calculates target CPU utilization as: `(actual_pod_cpu_usage / container_requested_cpu) * 100`.
+- **Requirement for `resources.requests.cpu`**: If a container spec omits `resources.requests.cpu`, HPA has no denominator for its equation and fails with `missing request for cpu`, setting `TARGETS: <unknown>/80%`.
+
+---
+
+### 2. Diagnostic Steps
+
+1. **Check HPA Status & Events**:
+   ```bash
+   kubectl describe hpa web-app-hpa
+   ```
+   *Look for `FailedGetResourceMetric` -> `missing request for cpu`.*
+
+2. **Inspect Deployment Container Resources**:
+   ```bash
+   kubectl get deployment web-app -o jsonpath='{.spec.template.spec.containers[*].resources}'
+   ```
+
+3. **Add CPU Request to Manifest**:
+   Update `resources.requests.cpu` in manifest:
+   ```yaml
+   spec:
+     template:
+       spec:
+         containers:
+         - name: web-container
+           image: nginx:1.25-alpine
+           resources:
+             requests:
+               cpu: "100m"
+               memory: "128Mi"
+   ```
+
+---
+
+### 3. Top Production Causes for HPA Scaling Failures
+
+| Cause Category | Typical Error Message | Common Root Cause & Solution |
+| :--- | :--- | :--- |
+| **Missing Container `requests.cpu`** | `TARGETS: <unknown>/80%` | Container spec omits `resources.requests.cpu`. Define `requests.cpu` in deployment spec. |
+| **Metrics Server Not Installed / Unhealthy** | `unable to get metrics for resource cpu` | `metrics-server` pod in `kube-system` missing, unready, or running without `--kubelet-insecure-tls`. |
+| **Misconfigured `scaleTargetRef`** | `invalid target reference` | HPA `scaleTargetRef.name` or `kind` has a typo or references non-existent deployment. |
+| **Custom Metrics API Adapter Failure** | `failed to get custom metric` | Prometheus Adapter or custom metrics API provisioner missing RBAC permissions or unreachable. |
+| **Scale Down Stabilization Delay** | HPA scaling delayed | HPA `behavior.scaleDown.stabilizationWindowSeconds` (5 minutes by default) holding scale-down action. |
+
+---
+
+## Verification & Expected Outcome
+Run `verify.sh` or inspect HPA:
+```bash
+kubectl get hpa web-app-hpa
+```
+Expected Output:
+```
+NAME          REFERENCE            TARGETS    MINPODS   MAXPODS   REPLICAS   AGE
+web-app-hpa   Deployment/web-app   0%/80%     1         10        1          5m
+```
+HPA `TARGETS` must show a valid utilization percentage (e.g. `0%/80%`) instead of `<unknown>/80%`.

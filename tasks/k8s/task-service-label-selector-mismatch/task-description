@@ -1,0 +1,93 @@
+# Kubernetes Lab: Debugging Service Label Selector Mismatch (No Endpoints)
+
+## Background Scenario
+A frontend web deployment (`web-frontend`) was deployed with 3 healthy pod replicas in `1/1 Running` state. However, clients trying to access the application via `frontend-service` experience connection failures and timeouts. Checking the Kubernetes Service reveals that it has zero active endpoints (`ENDPOINTS: <none>`).
+
+Your objective as a DevOps / Kubernetes Engineer is to inspect the Service configuration, identify the label selector mismatch between `frontend-service` and the `web-frontend` pods, correct the Service selector, and ensure HTTP requests to `frontend-service` return `200 OK`.
+
+---
+
+## Symptoms Observed
+- `kubectl get endpoints frontend-service` displays:
+  ```
+  NAME               ENDPOINTS   AGE
+  frontend-service   <none>      5m
+  ```
+- Sending HTTP requests to `frontend-service:80` fails with `Connection Refused` or timeout.
+- `kubectl get pods -l app=web-frontend` confirms 3 healthy pods are running.
+
+---
+
+## Task Objectives
+1. Inspect the Service definition and selector:
+   ```bash
+   kubectl get service frontend-service -o yaml
+   ```
+2. Inspect the labels of running pods:
+   ```bash
+   kubectl get pods --show-labels
+   ```
+3. Identify the discrepancy between the Service selector (`app: frontend-web-service`) and Pod labels (`app: web-frontend`).
+4. Update the Service selector in `/app/manifests.yaml` or via `kubectl edit service frontend-service` so `spec.selector.app` matches `web-frontend`.
+5. Verify that `kubectl get endpoints frontend-service` lists 3 pod IPs and HTTP requests to `frontend-service` succeed with `200 OK`.
+
+---
+
+## Troubleshooting Guide & Common Production Causes for Selector Mismatches
+
+### 1. How Kubernetes Services Target Pods
+- **Label Selector Matching**: The Kubernetes Endpoints controller watches Pod metadata and automatically adds Pod IPs to a Service's `Endpoints` object **only if** all key-value pairs specified in `Service.spec.selector` match the Pod's `metadata.labels`.
+- **Exact Match Required**: If a Service selector specifies `app: frontend-web-service` while Pods have `app: web-frontend`, zero pods will match, resulting in `ENDPOINTS: <none>`.
+
+---
+
+### 2. Diagnostic Steps
+
+1. **Check Service Endpoints**:
+   ```bash
+   kubectl get endpoints frontend-service
+   ```
+   *If output is `<none>`, the Service selector matches zero pods in the namespace.*
+
+2. **Compare Service Selector vs Pod Labels**:
+   ```bash
+   # View Service Selector
+   kubectl get service frontend-service -o jsonpath='{.spec.selector}'
+   
+   # View Pod Labels
+   kubectl get pods --show-labels
+   ```
+
+3. **Update Service Selector**:
+   Edit Service manifest to match pod labels:
+   ```yaml
+   spec:
+     selector:
+       app: web-frontend
+   ```
+
+---
+
+### 3. Top Production Causes for Service Label Selector Mismatches
+
+| Cause Category | Typical Symptom | Common Root Cause & Solution |
+| :--- | :--- | :--- |
+| **Typo in Service Selector Key/Value** | `ENDPOINTS: <none>` | Typo in service selector (e.g. `app: web-servcie` vs `app: web-frontend`). Correct selector in Service manifest. |
+| **Extra Unmatched Label Key** | `ENDPOINTS: <none>` | Service specifies `app: web-frontend` AND `environment: production`, but Pods only have `app: web-frontend`. Remove extra label from Service selector. |
+| **Deployment `template.metadata.labels` Mismatch** | `ENDPOINTS: <none>` | Deployment `spec.selector` matches `template.metadata.labels`, but Service selector references a legacy label. Align Service selector with Deployment template labels. |
+| **Namespace Discrepancy** | `ENDPOINTS: <none>` | Service was created in `default` namespace while target Deployment runs in `staging` namespace. Ensure Service and Pods reside in the same namespace. |
+| **TargetPort / Named Port Mismatch** | `Connection Refused` despite endpoints present | Service selector matches Pods, but `targetPort` points to `http-port` while container defines port name `web-port`. Align port names or port numbers. |
+
+---
+
+## Verification & Expected Outcome
+Run `verify.sh` or inspect endpoints:
+```bash
+kubectl get endpoints frontend-service
+```
+Expected Output:
+```
+NAME               ENDPOINTS                                          AGE
+frontend-service   10.42.0.11:80,10.42.0.12:80,10.42.0.13:80          5m
+```
+HTTP requests to `frontend-service:80` must return `200 OK` from Nginx.

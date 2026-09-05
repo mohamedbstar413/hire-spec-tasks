@@ -1,0 +1,112 @@
+# Kubernetes Lab: Debugging Pod Creation Failure (ResourceQuota Enforcing Missing Resources)
+
+## Background Scenario
+A developer attempted to deploy a web application (`restricted-app`). However, no pods are being deployed, and `kubectl get pods` shows zero pods running in the namespace.
+
+Upon checking the Deployment and ReplicaSet status, the Kubernetes API server admission controller reports that pod creation was rejected because a `ResourceQuota` is configured in the namespace requiring explicit resource `requests` and `limits` on all containers.
+
+Your objective as a DevOps / Kubernetes Engineer is to inspect the ReplicaSet events and ResourceQuota rules, update the Deployment specification to include explicit CPU and memory `requests` and `limits`, and ensure the pod is successfully deployed into `1/1 Running` state (`READY 1/1`).
+
+---
+
+## Symptoms Observed
+- `kubectl get deployment restricted-app` shows `READY: 0/1`.
+- `kubectl get pods` displays `No resources found in default namespace.`
+- Running `kubectl describe deployment restricted-app` or `kubectl describe rs` displays:
+  ```
+  Warning  FailedCreate  15s  replicaset-controller  Error creating: pods "restricted-app-..." is forbidden: failed quota: compute-quota: must specify requests.cpu for: web-container; requests.memory for: web-container; limits.cpu for: web-container; limits.memory for: web-container
+  ```
+
+---
+
+## Task Objectives
+1. Inspect the Deployment and ReplicaSet status:
+   ```bash
+   kubectl describe deployment restricted-app
+   kubectl get rs
+   kubectl describe rs
+   ```
+2. Inspect active ResourceQuotas in namespace `default`:
+   ```bash
+   kubectl get resourcequota
+   kubectl describe resourcequota compute-quota
+   ```
+3. Identify that `compute-quota` enforces explicit CPU and memory `requests` and `limits` on all containers.
+4. Update `/app/manifests.yaml` (or edit deployment) to specify container `resources`:
+   ```yaml
+   spec:
+     template:
+       spec:
+         containers:
+         - name: web-container
+           image: nginx:1.25-alpine
+           resources:
+             requests:
+               cpu: "100m"
+               memory: "128Mi"
+             limits:
+               cpu: "500m"
+               memory: "256Mi"
+   ```
+5. Re-apply the manifest (`kubectl apply -f /app/manifests.yaml`) and verify that the pod is created and reaches `1/1 Running` (`READY 1/1`).
+
+---
+
+## Troubleshooting Guide & Common Production Causes for ResourceQuota Admission Failures
+
+### 1. How ResourceQuotas Work with Pod Admissions
+- **Quota Admission Plugin**: When a `ResourceQuota` enforces CPU/memory requests or limits in a namespace, Kubernetes **requires every Pod deployed in that namespace to have explicit resource declarations**, unless a `LimitRange` is defined to supply defaults.
+- **ReplicaSet Admission Failure**: If a Deployment/Pod spec omits the `resources` section, the ReplicaSet controller's request to create Pods is rejected at the API server admission phase, leaving `0/1` ready pods.
+
+---
+
+### 2. Diagnostic Steps
+
+1. **Check ReplicaSet Event History**:
+   ```bash
+   kubectl describe rs
+   ```
+   *Look for `Error creating: pods ... is forbidden: failed quota ... must specify requests.cpu`.*
+
+2. **Inspect Namespace ResourceQuota**:
+   ```bash
+   kubectl describe resourcequota compute-quota
+   ```
+
+3. **Add Resources to Deployment Spec**:
+   Update `resources` in manifest:
+   ```yaml
+   resources:
+     requests:
+       cpu: "100m"
+       memory: "128Mi"
+     limits:
+       cpu: "500m"
+       memory: "256Mi"
+   ```
+
+---
+
+### 3. Top Production Causes for ResourceQuota Deployment Failures
+
+| Cause Category | Typical Symptom | Common Root Cause & Solution |
+| :--- | :--- | :--- |
+| **Missing Container `resources` Block** | `is forbidden: failed quota ... must specify requests/limits` | Namespace ResourceQuota enforces quota, but Pod spec omits `resources` block and no default `LimitRange` exists. |
+| **Hard Quota Limit Exceeded** | `exceeded quota: compute-quota` | Total CPU/Memory requested by all namespace pods exceeds `hard` quota limit (e.g. requested `6Gi` vs limit `4Gi`). Lower pod requests or increase quota. |
+| **Pod Count Limit Exceeded** | `exceeded quota: pod-quota` | Namespace quota limits total pods (`hard.pods: "10"`). New pod creation rejected. Increase pod quota limit. |
+| **Unmatched LimitRange / Quota Mismatch** | `is forbidden: failed quota` | `LimitRange` default request exceeds maximum allowed by `ResourceQuota`. Align `LimitRange` defaults with `ResourceQuota` limits. |
+| **Scoped Quotas (`NotTerminating`)** | `is forbidden: failed quota` | ResourceQuota is scoped to non-terminating pods; long-running pods omitting `resources` are blocked. |
+
+---
+
+## Verification & Expected Outcome
+Run `verify.sh` or inspect deployment:
+```bash
+kubectl get deployment restricted-app
+```
+Expected Output:
+```
+NAME             READY   UP-TO-DATE   AVAILABLE   AGE
+restricted-app   1/1     1            1           5m
+```
+The pod `restricted-app-*` must be created successfully and reach `READY 1/1` in `Running` state.

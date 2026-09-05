@@ -1,0 +1,41 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: api-config
+  namespace: default
+data:
+  PORT: "8080"
+  ENV: "production"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: api-server
+  namespace: default
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: api-server
+  template:
+    metadata:
+      labels:
+        app: api-server
+    spec:
+      containers:
+      - name: web-app
+        image: python:3.9-slim
+        command: ["python3", "-c", "import os, time; print(f'Connected to {os.getenv(\"DATABASE_URL\")}'); time.sleep(3600)"]
+        env:
+        - name: PORT
+          valueFrom:
+            configMapKeyRef:
+              name: api-config
+              key: PORT
+        - name: DATABASE_URL
+          valueFrom:
+            configMapKeyRef:
+              name: api-config
+              key: DATABASE_URL
+        ports:
+        - containerPort: 8080

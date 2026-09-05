@@ -1,0 +1,118 @@
+# Kubernetes Lab: Debugging LimitRange Pod Rejection (Resource Violations)
+
+## Background Scenario
+A web service deployment (`web-service`) was applied to the cluster, but no pods are running (`0/1` ready). `kubectl get pods` shows no pods generated for the deployment.
+
+The cluster administrator configured a `LimitRange` (`mem-cpu-limit-range`) in the `default` namespace to enforce minimum and maximum CPU and memory boundaries for containers. However, the container specification in the `web-service` deployment violates these boundaries:
+- Requested memory (`64Mi`) is below the minimum required (`128Mi`).
+- CPU limit (`2000m` / 2 CPU cores) exceeds the maximum allowed (`500m` / 0.5 CPU core).
+- Memory limit (`1Gi`) exceeds the maximum allowed (`512Mi`).
+
+Because of these violations, the Kubernetes API server `LimitRanger` admission controller rejects the `replicaset-controller`'s pod creation requests.
+
+Your objective as a DevOps / Kubernetes Engineer is to inspect the ReplicaSet events and LimitRange configuration, correct the resource requests and limits in `web-service` to comply with `mem-cpu-limit-range`, and bring the deployment to `1/1 Ready` state.
+
+---
+
+## Symptoms Observed
+- `kubectl get deployment web-service` displays `READY: 0/1`.
+- `kubectl get pods` displays `No resources found in default namespace.`
+- Running `kubectl describe deployment web-service` or `kubectl describe rs` displays admission error warnings:
+  ```
+  Warning  FailedCreate  20s  replicaset-controller  Error creating: pods "web-service-..." is forbidden: [maximum cpu usage per Container is 500m, but limit is 2000m, maximum memory usage per Container is 512Mi, but limit is 1Gi, minimum memory usage per Container is 128Mi, but request is 64Mi]
+  ```
+
+---
+
+## Task Objectives
+1. Inspect the Deployment and ReplicaSet status:
+   ```bash
+   kubectl describe deployment web-service
+   kubectl get rs
+   kubectl describe rs
+   ```
+2. Inspect active LimitRanges in namespace `default`:
+   ```bash
+   kubectl get limitrange
+   kubectl describe limitrange mem-cpu-limit-range
+   ```
+3. Identify the constraints imposed by `mem-cpu-limit-range`:
+   - Min CPU: `50m`, Min Memory: `128Mi`
+   - Max CPU: `500m`, Max Memory: `512Mi`
+   - Default Request: CPU `100m`, Memory `128Mi`
+   - Default Limit: CPU `250m`, Memory `256Mi`
+4. Update `/app/manifests.yaml` (or edit deployment) to align container resources within the min/max range:
+   ```yaml
+   spec:
+     template:
+       spec:
+         containers:
+         - name: web-container
+           image: nginx:1.25-alpine
+           resources:
+             requests:
+               cpu: "100m"
+               memory: "128Mi"
+             limits:
+               cpu: "500m"
+               memory: "256Mi"
+   ```
+5. Re-apply the manifest (`kubectl apply -f /app/manifests.yaml`) and verify that the pod is created and reaches `1/1 Running` (`READY 1/1`).
+
+---
+
+## Troubleshooting Guide & Common Production Causes for LimitRange Resource Violations
+
+### 1. How LimitRanges Work with Pod Admissions
+- **LimitRanger Admission Controller**: Evaluates all pod creation requests against the active `LimitRange` policies in the target namespace.
+- **Enforcement Rules**:
+  - If container `requests` < `min`, pod creation is **forbidden**.
+  - If container `limits` > `max`, pod creation is **forbidden**.
+  - If container omits `requests` or `limits`, `LimitRange` injects the configured `default` and `defaultRequest` values.
+- **ReplicaSet Controller Blocked**: Because pod creation is rejected at the API server admission phase, the ReplicaSet cannot launch any pods, leaving the Deployment at `0/1 READY`.
+
+---
+
+### 2. Diagnostic Steps
+
+1. **Check ReplicaSet Event Logs**:
+   ```bash
+   kubectl describe rs
+   ```
+   *Look for `Error creating: pods ... is forbidden: [maximum cpu usage ... minimum memory usage ...]`.*
+
+2. **Inspect Namespace LimitRange Specs**:
+   ```bash
+   kubectl describe limitrange mem-cpu-limit-range
+   ```
+
+3. **Adjust Container Resource Values**:
+   Ensure container requests and limits fit inside the defined `[min, max]` interval:
+   $$\text{min.cpu} \le \text{request.cpu} \le \text{limit.cpu} \le \text{max.cpu}$$
+   $$\text{min.memory} \le \text{request.memory} \le \text{limit.memory} \le \text{max.memory}$$
+
+---
+
+### 3. Top Production Causes for LimitRange Pod Rejections
+
+| Cause Category | Typical Symptom | Common Root Cause & Solution |
+| :--- | :--- | :--- |
+| **Exceeding Max Limits** | `maximum cpu/memory usage per Container is X, but limit is Y` | Container requests more CPU/memory limits than allowed by namespace `LimitRange`. Reduce container `limits` or increase `LimitRange` max limits. |
+| **Below Min Requests** | `minimum memory/cpu usage per Container is X, but request is Y` | Container requests less CPU/memory than required minimum. Increase container `requests` to meet or exceed `min`. |
+| **Request Exceeds Limit** | `request ... is greater than limit ...` | Container `requests` specified higher than container `limits`. Fix typo in pod spec. |
+| **Ratio Violation (`maxLimitRequestRatio`)** | `cpu max limit to request ratio per Container is X, but limit/request ratio is Y` | `LimitRange` enforces a maximum ratio between limit and request. Adjust limit/request values to satisfy ratio. |
+| **Storage LimitRange Violation** | `maximum storage request per PVC is X, but request is Y` | PVC request exceeds `LimitRange` storage maximum. Lower PVC storage request or update LimitRange. |
+
+---
+
+## Verification & Expected Outcome
+Run `verify.sh` or inspect deployment:
+```bash
+kubectl get deployment web-service
+```
+Expected Output:
+```
+NAME          READY   UP-TO-DATE   AVAILABLE   AGE
+web-service   1/1     1            1           5m
+```
+The pod `web-service-*` must be created successfully and reach `READY 1/1` in `Running` state.

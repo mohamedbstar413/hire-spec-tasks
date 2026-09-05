@@ -1,0 +1,11 @@
+Troubleshoot and fix a Docker Compose service deployment failure caused by invalid resource limits vs reservations.
+
+Requirements:
+- Located in `/app`, you will find `app.py`, `Dockerfile`, and `docker-compose.yml`.
+- Attempting to start the Compose services (`docker compose up -d` or `docker compose config`) fails or raises a deployment resource constraint error.
+- Diagnose why Docker Compose rejects the configuration:
+  - Inspect `/app/docker-compose.yml` under `deploy.resources`.
+  - Notice that resource `limits` (`cpus: 0.5`, `memory: 128M`) are configured to be LESS than resource `reservations` (`cpus: 2.0`, `memory: 512M`).
+- Fix `/app/docker-compose.yml` so that `limits` are greater than or equal to `reservations` (e.g. set `reservations: cpus: 0.5, memory: 128M` and `limits: cpus: 2.0, memory: 512M`, or ensure `limits >= reservations`).
+- Start the Compose services (`docker compose up -d`).
+- Verify that `docker compose ps` shows `web_resource_container` as `Up` (running).
