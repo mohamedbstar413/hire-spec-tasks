@@ -1,0 +1,15 @@
+A project folder at `/srv/project-files` has become disorganized with mixed file types (`.txt`, `.sh`, `.log`, `.tmp`). You need to organize the files, clean up temporary data, and archive the project.
+
+Task Requirements:
+1. Inside `/srv/project-files`, create three subdirectories:
+   - `docs/`
+   - `scripts/`
+   - `logs/`
+2. Sort the existing files into their designated subdirectories:
+   - Move all `.txt` files into `/srv/project-files/docs/`
+   - Move all `.sh` files into `/srv/project-files/scripts/`
+   - Move all `.log` files into `/srv/project-files/logs/`
+3. Remove all temporary `.tmp` files from `/srv/project-files/`.
+4. Create a backup target directory at `/var/backups/projects/`.
+5. Compress the entire organized `/srv/project-files` directory into a gzip-compressed tar archive named `project-files-backup.tar.gz` (or `project-files-*.tar.gz`).
+6. Store the compressed archive inside `/var/backups/projects/`.

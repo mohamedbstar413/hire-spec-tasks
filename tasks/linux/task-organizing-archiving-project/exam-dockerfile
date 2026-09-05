@@ -1,0 +1,38 @@
+FROM bstar999/linux-lab-image:systemd
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Install tar, gzip, zip, sudo, and core tools
+RUN apt-get update && apt-get install -y \
+    tar \
+    gzip \
+    zip \
+    sudo \
+    shadow \
+    coreutils \
+    findutils \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*
+
+# Create candidate user with passwordless sudo
+RUN useradd -m -s /bin/bash candidate && \
+    echo "candidate ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/candidate && \
+    chmod 0440 /etc/sudoers.d/candidate
+
+# Pre-populate disorganized project directory with mixed files
+RUN mkdir -p /srv/project-files && \
+    echo "Project Notes" > /srv/project-files/notes.txt && \
+    echo "Documentation" > /srv/project-files/readme.txt && \
+    echo "#!/bin/bash\necho Deploy" > /srv/project-files/deploy.sh && \
+    echo "#!/bin/bash\necho Build" > /srv/project-files/build.sh && \
+    echo "2026-09-05 INFO Application started" > /srv/project-files/server.log && \
+    echo "2026-09-05 DEBUG Debug trace" > /srv/project-files/debug.log && \
+    echo "temp cache data" > /srv/project-files/cache.tmp && \
+    echo "session state" > /srv/project-files/session.tmp && \
+    chmod -R 777 /srv/project-files
+
+USER root
+WORKDIR /root
+
+STOPSIGNAL SIGRTMIN+3
+CMD ["/sbin/init"]
