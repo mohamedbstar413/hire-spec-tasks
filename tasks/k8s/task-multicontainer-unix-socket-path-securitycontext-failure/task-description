@@ -1,0 +1,83 @@
+# Kubernetes Lab: Debugging Multi-Container Unix Socket Communication & SecurityContext Failures
+
+## Background Scenario
+A multi-container pod (`app-with-sidecar`) consisting of `main-app` and `sidecar-proxy` is failing to start. `kubectl get pods` shows `0/2 READY` or `1/2 READY`.
+
+Container logs for `main-app` report connection errors:
+`ls: /var/run/proxy/sidecar.sock: No such file or directory`
+
+Root cause analysis reveals two critical issues in the pod manifest:
+1. **Mount Path Mismatch**: `sidecar-proxy` creates its Unix domain socket at `/var/run/sidecar/sidecar.sock` on a shared `emptyDir` volume, but `main-app` mounts the volume at `/var/run/proxy`, searching for `/var/run/proxy/sidecar.sock`.
+2. **SecurityContext Block**: `sidecar-proxy` specifies `securityContext.readOnlyRootFilesystem: true` without mounting a writable volume for socket creation, causing the socket creation attempt to fail.
+
+Your objective as a Senior Kubernetes Engineer is to align the volume mount paths and fix the `securityContext` settings in `/app/manifests.yaml`, re-apply the deployment, and verify that both containers reach `2/2 READY` in `Running` state.
+
+---
+
+## Symptoms Observed
+- `kubectl get deployment app-with-sidecar` displays `READY: 0/1`.
+- `kubectl get pods -l app=app-with-sidecar` displays `0/2 READY` or `1/2 READY`.
+- Container logs (`kubectl logs -l app=app-with-sidecar -c main-app`) display file/socket access errors:
+  ```
+  Connecting to sidecar...
+  ls: /var/run/proxy/sidecar.sock: No such file or directory
+  ```
+
+---
+
+## Task Objectives
+1. Inspect container logs for both containers:
+   ```bash
+   kubectl logs deployment/app-with-sidecar -c main-app
+   kubectl logs deployment/app-with-sidecar -c sidecar-proxy
+   ```
+2. Inspect `/app/manifests.yaml` to trace `volumeMounts` and `securityContext`:
+   - `main-app` mounts `socket-dir` at `/var/run/proxy`.
+   - `sidecar-proxy` mounts `socket-dir` at `/var/run/sidecar` with `readOnlyRootFilesystem: true`.
+3. Update `/app/manifests.yaml`:
+   - Align `mountPath` for `main-app` to `/var/run/sidecar`.
+   - Ensure `emptyDir` volume `socket-dir` is writable by `sidecar-proxy`.
+4. Re-apply the manifest (`kubectl apply -f /app/manifests.yaml`) and verify that `app-with-sidecar` reaches `2/2 READY` (`READY 2/2`).
+
+---
+
+## Troubleshooting Guide & Common Production Causes for Multi-Container Socket Failures
+
+### 1. Inter-Container Communication Patterns (TCP vs IPC / Unix Sockets)
+- **Shared Network Namespace**: All containers in a Pod share `localhost` IP loopback network interface.
+- **Unix Domain Sockets**: Higher performance IPC mechanism. Requires sharing an `emptyDir` volume across both containers mounted at identical or mapped directory paths.
+- **SecurityContext Constraints**: If `readOnlyRootFilesystem: true` is set, socket files cannot be created in non-mounted container root directories.
+
+---
+
+### 2. Diagnostic Steps
+
+1. **Check Mount Paths on Shared Volumes**:
+   Verify `volumeMounts[*].mountPath` matches between sender and listener containers.
+
+2. **Inspect Container Security Context**:
+   Ensure securityContext allows socket file creation (`bind`, permissions, rootfs).
+
+---
+
+### 3. Top Production Causes for IPC / Unix Socket Failures
+
+| Cause Category | Typical Error Log | Root Cause & Remediation |
+| :--- | :--- | :--- |
+| **Volume Mount Path Mismatch** | `No such file or directory` | Container A mounts `emptyDir` at `/var/run/app`, Container B mounts at `/var/run/proxy`. Align mount paths. |
+| **ReadOnly RootFS Block** | `Read-only file system` | `readOnlyRootFilesystem: true` blocks socket creation outside mounted volumes. Mount `emptyDir` on socket dir. |
+| **UID/GID Socket Permissions** | `Permission denied` | Socket created with `0700` owned by `UID 1000` cannot be read by `main-app` running as `UID 10001`. Fix permissions or `fsGroup`. |
+
+---
+
+## Verification & Expected Outcome
+Run `verify.sh` or inspect deployment status:
+```bash
+kubectl get deployment app-with-sidecar
+```
+Expected Output:
+```
+NAME               READY   UP-TO-DATE   AVAILABLE   AGE
+app-with-sidecar   1/1     1            1           5m
+```
+`verify.sh` exits with return code `0`.

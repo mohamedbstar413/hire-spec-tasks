@@ -1,0 +1,100 @@
+# Kubernetes Lab: Debugging HPA Scaling Failure (Metric Label Selector Mismatch)
+
+## Background Scenario
+An autoscaling web deployment (`web-app`) is experiencing high traffic loads, but the HorizontalPodAutoscaler (`web-app-hpa`) refuses to scale up additional pod replicas.
+
+Inspect `kubectl describe hpa web-app-hpa` shows metric evaluation errors:
+`Warning FailedGetPodsMetric 20s HorizontalPodAutoscaler unable to get metrics: no metrics returned for pods`
+
+In this cluster, a mutating admission webhook injects environment labels (`webhook-injected-tag: production-v2`) onto pods upon creation. However, the HPA definition was configured with a hardcoded metric label selector expecting an obsolete tag (`webhook-injected-tag: legacy-v1`).
+
+Because the metric labels do not match what the HPA controller expects, the HPA fails to match metric samples scraped from `metrics-server` to the target pods and refuses to calculate scaling requirements.
+
+Your objective as a DevOps / Kubernetes Engineer is to inspect the HPA specification, update `/app/manifests.yaml` to align the metric label selector with actual pod labels (or switch to standard `type: Resource` CPU metrics), re-apply the manifest, and verify that `web-app-hpa` retrieves metrics cleanly.
+
+---
+
+## Symptoms Observed
+- `kubectl get hpa web-app-hpa` displays `TARGETS: <unknown>/100m` or `invalid metric selector`.
+- `kubectl describe hpa web-app-hpa` displays warning events:
+  ```
+  Warning  FailedGetPodsMetric  15s  horizontal-pod-autoscaler  unable to get metrics for resource cpu: no metrics returned for pods with labels webhook-injected-tag=legacy-v1
+  ```
+
+---
+
+## Task Objectives
+1. Inspect HPA metrics status and events:
+   ```bash
+   kubectl get hpa web-app-hpa
+   kubectl describe hpa web-app-hpa
+   ```
+2. Inspect pod labels and HPA metric selector in `/app/manifests.yaml`:
+   ```bash
+   kubectl get pods -l app=web-app --show-labels
+   ```
+3. Identify the label mismatch (`webhook-injected-tag: legacy-v1` vs pod label `production-v2`).
+4. Update `/app/manifests.yaml` (or edit HPA):
+   Change HPA metrics spec to use standard resource metrics or match current pod labels:
+   ```yaml
+   spec:
+     metrics:
+     - type: Resource
+       resource:
+         name: cpu
+         target:
+           type: Utilization
+           averageUtilization: 80
+   ```
+5. Re-apply the manifest (`kubectl apply -f /app/manifests.yaml`) and verify that `web-app-hpa` reports active CPU metrics without errors.
+
+---
+
+## Troubleshooting Guide & Common Production Causes for HPA Metric Gathering Failures
+
+### 1. How HPA Evaluates Metrics
+- **Resource Metrics (`type: Resource`)**: Scrapes CPU and memory utilization from `metrics-server` directly for pods targeted by `scaleTargetRef.selector`.
+- **Pod Metrics (`type: Pods`)**: Scrapes custom metrics associated with pods. If a `selector` is provided under `metric:`, HPA filters scraped metrics against `selector.matchLabels`.
+- **Mutating Webhooks & Label Injections**: Admission webhooks can inject or alter pod labels dynamically. If HPA manifests specify static label filters that differ from post-mutation pod labels, metrics matching fails.
+
+---
+
+### 2. Diagnostic Steps
+
+1. **Check HPA Status**:
+   ```bash
+   kubectl describe hpa web-app-hpa
+   ```
+
+2. **Verify Pod Metrics Availability**:
+   ```bash
+   kubectl top pods -l app=web-app
+   ```
+
+3. **Align HPA Spec with Target Deployment**:
+   Ensure metric selectors do not filter out valid pods.
+
+---
+
+### 3. Top Production Causes for HPA Metric Failures
+
+| Cause Category | Typical Event Log | Common Root Cause & Remediation |
+| :--- | :--- | :--- |
+| **Metric Label Selector Mismatch** | `no metrics returned for pods with labels ...` | HPA specifies metric `selector` matching non-existent or mutated pod labels. Remove/update metric selector. |
+| **Missing Resource Requests** | `missing request for cpu` | Deployment template omits `resources.requests.cpu`. Add resource requests block. |
+| **Metrics Server Unhealthy** | `unable to get metrics: API service unavailable` | `metrics-server` deployment crashed or API service disconnected. Repair metrics-server. |
+| **ScaleTargetRef Mismatch** | `target deployment not found` | `scaleTargetRef.name` points to non-existent deployment or wrong API version (`apps/v1` vs `extensions/v1beta1`). |
+
+---
+
+## Verification & Expected Outcome
+Run `verify.sh` or inspect HPA:
+```bash
+kubectl get hpa web-app-hpa
+```
+Expected Output:
+```
+NAME          REFERENCE            TARGETS   MINPODS   MAXPODS   REPLICAS   AGE
+web-app-hpa   Deployment/web-app   0%/80%    1         5         1          5m
+```
+`verify.sh` exits with return code `0`.

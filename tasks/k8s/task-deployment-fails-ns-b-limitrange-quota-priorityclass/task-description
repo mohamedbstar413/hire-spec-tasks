@@ -1,0 +1,91 @@
+# Kubernetes Lab: Debugging Cross-Namespace Deployment Failures (LimitRange + Quota Conflict)
+
+## Background Scenario
+A DevOps team successfully deploys web application `app-service` in namespace `ns-a` (`READY 1/1`). However, when applying the **exact same deployment manifest** to namespace `ns-b`, pod creation fails completely (`READY 0/1`), leaving zero running pods.
+
+Inspect `kubectl describe rs -n ns-b` reveals an admission control failure:
+`Warning FailedCreate 15s replicaset-controller Error creating: pods "app-service-..." is forbidden: exceeded quota: ns-quota, requested: requests.cpu=1000m, used: requests.cpu=800m, limited: requests.cpu=1200m`
+
+Why did the exact same manifest fail in `ns-b`?
+1. The `app-service` manifest omits explicit container `resources`.
+2. In `ns-a`, no LimitRange exists, so default requests are omitted or small.
+3. In `ns-b`, a `LimitRange` (`default-limits`) automatically injects `defaultRequest: { cpu: "1000m", memory: "1Gi" }`.
+4. Namespace `ns-b` has an active `ResourceQuota` (`ns-quota`, hard CPU request `1200m`) with `800m` already allocated to existing workloads. Injected request (`1000m` + `800m` used = `1800m`) exceeds `1200m`, causing API admission rejection.
+
+Your objective as a Senior Kubernetes Engineer is to audit policy configurations in `ns-b`, update `/app/manifests.yaml` to specify explicit compact container `resources` (e.g. `requests.cpu: "100m"`), re-apply the deployment into `ns-b`, and ensure `app-service` reaches `1/1 Ready` in both namespaces.
+
+---
+
+## Symptoms Observed
+- `kubectl get deployment app-service -n ns-a` displays `READY: 1/1`.
+- `kubectl get deployment app-service -n ns-b` displays `READY: 0/1`.
+- `kubectl describe rs -n ns-b` displays admission error warnings:
+  ```
+  Warning  FailedCreate  12s  replicaset-controller  Error creating: pods "app-service-..." is forbidden: exceeded quota: ns-quota
+  ```
+
+---
+
+## Task Objectives
+1. Inspect deployment status across namespaces:
+   ```bash
+   kubectl get deployment app-service -n ns-a
+   kubectl get deployment app-service -n ns-b
+   ```
+2. Inspect `ns-b` LimitRange and ResourceQuota policies:
+   ```bash
+   kubectl describe limitrange default-limits -n ns-b
+   kubectl describe resourcequota ns-quota -n ns-b
+   ```
+3. Identify that `LimitRange` automatically injects large default requests (`cpu: 1000m`), violating `ns-quota`.
+4. Update `/app/manifests.yaml` to specify explicit, lower container resources:
+   ```yaml
+   resources:
+     requests:
+       cpu: "100m"
+       memory: "128Mi"
+     limits:
+       cpu: "250m"
+       memory: "256Mi"
+   ```
+5. Re-apply the manifest (`kubectl apply -f /app/manifests.yaml`) and verify that `app-service` reaches `1/1 Ready` (`READY 1/1`) in `ns-b`.
+
+---
+
+## Troubleshooting Guide & Common Production Causes for Cross-Namespace Manifest Behavior Differences
+
+### 1. Namespace-Scoped Policy Injection
+- **LimitRange Implicit Mutation**: `LimitRange` rules are scoped per namespace. An unconfigured deployment manifest will behave differently in different namespaces depending on `defaultRequest` and `default` limit parameters defined in each namespace.
+- **ResourceQuota Preemption & Rejection**: When total requests exceed quota limits, pod creation requests are rejected at the API server admission phase, leaving ReplicaSets with zero pods.
+
+---
+
+### 2. Diagnostic Sequence
+1. Compare namespace-level objects between `ns-a` and `ns-b` (`kubectl get limitrange,resourcequota -n ns-b`).
+2. Inspect ReplicaSet events in the failing namespace (`kubectl describe rs -n ns-b`).
+3. Explicitly declare `resources` on all container specifications to prevent implicit `LimitRange` mutations.
+
+---
+
+### 3. Top Production Causes for Namespace-Specific Manifest Failures
+
+| Policy Difference | Typical Error Log | Root Cause & Remediation |
+| :--- | :--- | :--- |
+| **LimitRange Default Injection** | `exceeded quota: ...` | Namespace LimitRange injects large default requests into un-resourced containers, exceeding namespace ResourceQuota. Add explicit `resources` block. |
+| **Strict ServiceAccount / RBAC** | `forbidden: User ... cannot get ...` | Target namespace lacks RoleBindings / ServiceAccount permissions present in source namespace. Grant required RBAC. |
+| **NetworkPolicy Isolation** | Connection timeout | Target namespace has default-deny NetworkPolicy. Add ingress/egress rules. |
+| **StorageClass Absence** | `PVC pending: storageclass not found` | Target namespace references node/cluster storage class unavailable or restricted. |
+
+---
+
+## Verification & Expected Outcome
+Run `verify.sh` or inspect deployment status:
+```bash
+kubectl get deployment app-service -n ns-b
+```
+Expected Output:
+```
+NAME          READY   UP-TO-DATE   AVAILABLE   AGE
+app-service   1/1     1            1           5m
+```
+`verify.sh` exits with return code `0`.

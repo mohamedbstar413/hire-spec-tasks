@@ -1,0 +1,17 @@
+Users are filling up the shared storage directory at `/mnt/shared-storage`. You must configure disk quota limits to prevent single users or groups from consuming excessive disk space.
+
+Task Requirements:
+1. Configure user and group quota limits on `/mnt/shared-storage`:
+   - Set user quota limits for user `devuser`:
+     - Soft block limit: `51200` KB (50 MB)
+     - Hard block limit: `102400` KB (100 MB)
+     - Soft inode limit: `1000`
+     - Hard inode limit: `2000`
+   - Set group quota limits for group `devgroup`:
+     - Soft block limit: `204800` KB (200 MB)
+     - Hard block limit: `307200` KB (300 MB)
+     - Soft inode limit: `5000`
+     - Hard inode limit: `10000`
+2. Enable quota enforcement on `/mnt/shared-storage` or configure setquota rules.
+3. Generate a quota report and save the output to `/var/log/quota_report.txt`.
+4. Verify that attempting to write beyond the hard limit for user `devuser` triggers a "Disk quota exceeded" warning or error.

@@ -1,0 +1,85 @@
+# Kubernetes Lab: Debugging Empty Volume Snapshot Restores (WaitForFirstConsumer Binding)
+
+## Background Scenario
+A storage backup pipeline triggers `VolumeSnapshot` objects for persistent application data. However, when restoring a snapshot into a new `PersistentVolumeClaim` (`restored-pvc`) for deployment `data-app`, the restored volume is empty or uninitialized.
+
+The CSI driver logs show normal snapshot creation and restore operations. However, root cause analysis reveals:
+- The source `StorageClass` (`delayed-sc`) uses `volumeBindingMode: WaitForFirstConsumer`.
+- The source `PersistentVolumeClaim` (`source-pvc`) was snapshotted **before** any consumer Pod bound the PVC to a node.
+- Because `WaitForFirstConsumer` defers PV provisioning until a Pod is scheduled onto a specific node, snapshotting an unbound PVC captures an uninitialized/empty volume state.
+
+Your objective as a Senior Kubernetes Storage Engineer is to fix the storage allocation lifecycle in `/app/manifests.yaml` (binding the volume or switching to `volumeBindingMode: Immediate` / consumer attachment), ensure `restored-pvc` is populated and bound, and bring `data-app` to `1/1 Ready` state.
+
+---
+
+## Symptoms Observed
+- `VolumeSnapshot` created successfully without API errors, but restored PVC `restored-pvc` contains empty/uninitialized files.
+- `kubectl get pvc source-pvc` shows `STATUS: Pending` (Waiting for first consumer) at the time the snapshot was taken.
+
+---
+
+## Task Objectives
+1. Inspect StorageClass and PVC status:
+   ```bash
+   kubectl get storageclass delayed-sc
+   kubectl get pvc
+   ```
+2. Identify that `delayed-sc` uses `volumeBindingMode: WaitForFirstConsumer`, delaying volume provisioning until a pod mounts it.
+3. Update `/app/manifests.yaml` (or attach a consumer pod / update StorageClass binding mode):
+   Bind the PVC or use `volumeBindingMode: Immediate` so volumes are fully provisioned upon creation before snapshotting.
+4. Re-apply the manifest (`kubectl apply -f /app/manifests.yaml`) and verify that `restored-pvc` reaches `Bound` status and `data-app` reaches `1/1 Ready` (`READY 1/1`).
+
+---
+
+## Troubleshooting Guide & Common Production Causes for Snapshot Restore Failures
+
+### 1. Volume Binding Modes (`Immediate` vs `WaitForFirstConsumer`)
+- **`Immediate`**: Provisions PV and volume on storage backend immediately upon PVC creation.
+- **`WaitForFirstConsumer`**: Delays volume provisioning until a Pod requesting the PVC is scheduled onto a specific worker node (essential for node-local storage or zone topology constraints).
+- **Snapshot Pitfall**: Taking a `VolumeSnapshot` of a `WaitForFirstConsumer` PVC before a Pod consumes it results in snapshotting an unprovisioned volume, leading to empty restored volumes.
+
+---
+
+### 2. Diagnostic Steps
+
+1. **Check StorageClass Binding Mode**:
+   ```bash
+   kubectl get storageclass -o wide
+   ```
+
+2. **Inspect Source PVC Binding Status**:
+   ```bash
+   kubectl describe pvc source-pvc
+   ```
+
+3. **Verify Volume Snapshot Source Data**:
+   Ensure snapshot source PVC was in `Bound` status and contained valid filesystem data before taking the snapshot.
+
+---
+
+### 3. Top Production Causes for VolumeSnapshot Restore Issues
+
+| Cause Category | Typical Symptom | Root Cause & Remediation |
+| :--- | :--- | :--- |
+| **Unbound Source PVC Snapshot** | Restored PVC contains no data | Source PVC had `WaitForFirstConsumer` and was not bound to a pod prior to snapshotting. Bind source PVC before taking snapshots. |
+| **Missing SnapshotCRD / VolumeSnapshotClass** | `VolumeSnapshotClass not found` | `VolumeSnapshotClass` missing or invalid driver provisioner. Deploy matching `VolumeSnapshotClass`. |
+| **Capacity Mismatch** | `restored PVC size smaller than snapshot` | Restored PVC size request (`1Gi`) is smaller than snapshot source PV size (`5Gi`). Set restored PVC size >= snapshot size. |
+| **CSI Driver Plugin Crashed** | `Snapshotting failed` | CSI node or controller plugin pod crashed. Fix CSI driver daemonset/deployment. |
+
+---
+
+## Verification & Expected Outcome
+Run `verify.sh` or inspect PVC and deployment status:
+```bash
+kubectl get pvc restored-pvc
+kubectl get deployment data-app
+```
+Expected Output:
+```
+NAME           STATUS   VOLUME                                     CAPACITY   ACCESS MODES   AGE
+restored-pvc   Bound    pvc-12345678-90ab-cdef-1234-567890abcdef   1Gi        RWO            5m
+
+NAME       READY   UP-TO-DATE   AVAILABLE   AGE
+data-app   1/1     1            1           5m
+```
+`verify.sh` exits with return code `0`.
