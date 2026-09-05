@@ -1,0 +1,14 @@
+A new temporary team member requires a properly initialized user account and home directory environment.
+
+Task Requirements:
+1. Create a user named `labuser` with:
+   - Home directory: `/home/labuser`
+   - Default shell: `/bin/bash`
+2. Set an initial password for `labuser` (e.g. `InitialPass123!`) and force the user to change their password on first login (`chage -d 0 labuser` or `passwd -e labuser`).
+3. Create a custom login welcome message for `labuser`:
+   - Configure `/home/labuser/.bashrc` (or `/etc/profile.d/welcome.sh`) to display a welcome banner when `labuser` logs in containing the text `"Welcome to the Linux Lab Environment"`.
+4. Create a personal folder structure inside `/home/labuser/workspace/`:
+   - `/home/labuser/workspace/projects`
+   - `/home/labuser/workspace/docs`
+   - `/home/labuser/workspace/backups`
+5. Ensure all directories inside `/home/labuser/workspace/` are owned by `labuser:labuser`.
